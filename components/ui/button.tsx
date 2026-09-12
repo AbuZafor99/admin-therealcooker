@@ -1,0 +1,5 @@
+import { Slot } from "@radix-ui/react-slot";
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn } from "@/lib/utils";
+const styles = cva("inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#caa85a]/40", { variants: { variant: { default: "bg-[#caa85a] text-white hover:bg-[#b69448]", outline: "border border-[#caa85a] bg-white text-[#a68437] hover:bg-[#faf5e9]", danger: "bg-red-500 text-white hover:bg-red-600", ghost: "hover:bg-black/5" }, size: { default: "h-10 px-4", sm: "h-9 px-3", lg: "h-12 px-6", icon: "size-10 p-0" } }, defaultVariants: { variant: "default", size: "default" } });
+export function Button({ className, variant, size, asChild, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof styles> & { asChild?: boolean }) { const Comp = asChild ? Slot : "button"; return <Comp className={cn(styles({ variant, size }), className)} {...props} />; }

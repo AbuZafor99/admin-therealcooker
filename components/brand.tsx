@@ -1,0 +1,2 @@
+import { ChefHat, Coins } from "lucide-react";
+export function Brand({ compact = false }: { compact?: boolean }) { return <div className="flex items-center justify-center gap-2 text-[#2b2a24]"><div className="relative"><ChefHat className={compact ? "size-9 text-[#d7a900]" : "size-12 text-[#d7a900]"}/><Coins className="absolute -bottom-1 -left-3 size-5 text-[#b68a00]"/></div><span className={compact ? "text-xl font-extrabold" : "text-2xl font-extrabold"}>TheReal<span className="text-[#b68a00]">Cooker</span></span></div>; }

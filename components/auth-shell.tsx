@@ -1,0 +1,3 @@
+"use client";
+import { Brand } from "@/components/brand";
+export function AuthShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) { return <main className="min-h-screen bg-white px-5"><div className="mx-auto flex min-h-screen w-full max-w-[496px] flex-col items-center justify-center py-10"><div className="mb-20 sm:mb-24"><Brand /></div><h1 className="text-center text-3xl font-bold text-[#caa85a] sm:text-4xl">{title}</h1><p className="mb-9 mt-1 text-center text-sm text-slate-700">{subtitle}</p><div className="w-full">{children}</div></div></main>; }
