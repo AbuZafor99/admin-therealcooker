@@ -1,2 +1,26 @@
-import { ChefHat, Coins } from "lucide-react";
-export function Brand({ compact = false }: { compact?: boolean }) { return <div className="flex items-center justify-center gap-2 text-[#2b2a24]"><div className="relative"><ChefHat className={compact ? "size-9 text-[#d7a900]" : "size-12 text-[#d7a900]"}/><Coins className="absolute -bottom-1 -left-3 size-5 text-[#b68a00]"/></div><span className={compact ? "text-xl font-extrabold" : "text-2xl font-extrabold"}>TheReal<span className="text-[#b68a00]">Cooker</span></span></div>; }
+import Image from "next/image";
+
+export function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      className={
+        compact
+          ? "relative mx-auto h-[104px] w-[192px] overflow-hidden"
+          : "relative mx-auto h-[130px] w-[240px] overflow-hidden"
+      }
+    >
+      <Image
+        src="/moneykee-logo.png"
+        alt="MoneyKee"
+        width={1024}
+        height={1024}
+        sizes={compact ? "192px" : "240px"}
+        className={
+          compact
+            ? "absolute -left-[10px] -top-[55px] h-[210px] w-[210px] max-w-none"
+            : "absolute -left-[13px] -top-[69px] h-[263px] w-[263px] max-w-none"
+        }
+      />
+    </div>
+  );
+}
