@@ -298,13 +298,13 @@ function LearningModal({
           </label>
 
           <label className="block text-sm font-medium text-slate-700">
-            Description *
+            Body *
             <textarea
               name="description"
               defaultValue={item?.description}
               required
               rows={6}
-              placeholder="Write the learning description or key takeaways here..."
+              placeholder="Write the learning body or key takeaways here..."
               className="mt-1.5 w-full rounded-lg border border-slate-300 p-3 text-sm outline-none transition focus:border-[#caa85a] focus:ring-2 focus:ring-[#caa85a]/20"
             />
           </label>

@@ -3,4 +3,5 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SessionProvider } from "next-auth/react";
 import { useState } from "react";
 import { Toaster } from "sonner";
-export function Providers({ children }: { children: React.ReactNode }) { const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } } })); return <SessionProvider><QueryClientProvider client={client}>{children}<Toaster richColors position="top-right" /></QueryClientProvider></SessionProvider>; }
+import { isAxiosError } from "axios";
+export function Providers({ children }: { children: React.ReactNode }) { const [client] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, retry: (count, error) => count < 1 && !(isAxiosError(error) && (error.code === "AUTH_SESSION_EXPIRED" || error.response?.status === 401 || error.response?.status === 403)), refetchOnWindowFocus: false } } })); return <SessionProvider refetchInterval={60} refetchWhenOffline={false}><QueryClientProvider client={client}>{children}<Toaster richColors position="top-right" /></QueryClientProvider></SessionProvider>; }

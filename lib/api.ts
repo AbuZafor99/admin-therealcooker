@@ -1,4 +1,6 @@
 import axios from "axios";
+import { installAuthInterceptors } from "./auth-interceptors";
+import { logoutSession, refreshClientSession } from "./client-auth";
 export interface ApiResponse<T> { success: boolean; message: string; data: T; }
 export interface UserRecord { _id: string; name?: string; email?: string; userId?: string; phone?: string; role?: string; avatar?: { url?: string }; createdAt?: string; isBlocked?: boolean; }
 export interface GuardianRecord { _id: string; name: string; email: string; phone: string; relationship: string; isPrimary: boolean; status: string; createdAt?: string; user?: { _id: string; name?: string; email?: string; userId?: string }; }
@@ -8,9 +10,13 @@ export interface SubscriptionPlan { _id: string; name: string; benefits: string[
 export interface TermsRecord { _id: string; content: string; version: string; isActive: boolean; updatedAt?: string; }
 export const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXTPUBLICBASEURL || "http://localhost:5011/api/v1";
 export const api = axios.create({ baseURL: BASE_URL, timeout: 20000 });
-api.interceptors.request.use(async (config) => { if (typeof window !== "undefined") { const { getSession } = await import("next-auth/react"); const session = await getSession(); if (session?.accessToken) config.headers.Authorization = `Bearer ${session.accessToken}`; } return config; });
-api.interceptors.response.use((response) => response, (error) => Promise.reject(error));
-export async function loginApi(credentials: { email: string; password: string }) { const { data } = await api.post<ApiResponse<UserRecord & { accessToken: string }>>("/auth/login", credentials); return data.data; }
+installAuthInterceptors(api, {
+  enabled: () => typeof window !== "undefined",
+  getSession: async () => (await import("next-auth/react")).getSession(),
+  refreshSession: refreshClientSession,
+  logout: logoutSession,
+});
+export async function loginApi(credentials: { email: string; password: string }) { const { data } = await api.post<ApiResponse<UserRecord & { accessToken: string; refreshToken?: string }>>("/auth/login", credentials); return data.data; }
 export const forgotPassword = (email: string) => api.post<ApiResponse<null>>("/auth/forgot-password", { email }).then(r => r.data);
 export const verifyOtp = (email: string, otp: string) => api.post<ApiResponse<{ verified: boolean }>>("/auth/verify-otp", { email, otp }).then(r => r.data);
 export const resetPassword = (payload: { email: string; otp: string; newPassword: string; confirmPassword: string }) => api.post<ApiResponse<null>>("/auth/reset-password", payload).then(r => r.data);
