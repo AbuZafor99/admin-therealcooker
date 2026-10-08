@@ -36,9 +36,11 @@ import type {
   VerificationRecord,
   VerificationStatus,
 } from "@/lib/api";
+import { useAdminAccess } from "@/components/admin-access";
 import { apiError } from "@/lib/utils";
 
 export default function VerificationPage() {
+  const access = useAdminAccess();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<VerificationRecord | null | undefined>(
@@ -168,12 +170,13 @@ export default function VerificationPage() {
             <Button
               variant="outline"
               size="sm"
+              disabled={!access.can("verification:write")}
               onClick={() => setCsvModalOpen(true)}
             >
               <Upload size={16} />
               Upload CSV
             </Button>
-            <Button size="sm" onClick={() => setEditing(null)}>
+            <Button disabled={!access.can("verification:write")} size="sm" onClick={() => setEditing(null)}>
               <Plus size={16} />
               Add new
             </Button>
@@ -273,7 +276,7 @@ export default function VerificationPage() {
                         <select
                           aria-label={`Status for ${recordLabel(r)}`}
                           value={status}
-                          disabled={isUpdatingStatus}
+                          disabled={isUpdatingStatus || !access.can("verification:write")}
                           onChange={(event) =>
                             statusMutation.mutate({
                               id: r._id,
@@ -294,6 +297,7 @@ export default function VerificationPage() {
                           size="icon"
                           variant="ghost"
                           className="size-8 text-slate-500 hover:text-slate-900"
+                          disabled={!access.can("verification:write")}
                           onClick={() => setEditing(r)}
                           title="Edit record"
                         >
@@ -303,7 +307,7 @@ export default function VerificationPage() {
                           size="icon"
                           variant="ghost"
                           className="size-8 text-red-500 hover:bg-red-50 hover:text-red-600"
-                          disabled={deleteMutation.isPending}
+                          disabled={deleteMutation.isPending || !access.can("verification:write")}
                           onClick={() =>
                             confirm("Delete this verification record?") &&
                             deleteMutation.mutate(r._id)

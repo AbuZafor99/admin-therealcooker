@@ -2,7 +2,7 @@ import axios from "axios";
 import { installAuthInterceptors } from "./auth-interceptors";
 import { logoutSession, refreshClientSession } from "./client-auth";
 export interface ApiResponse<T> { success: boolean; message: string; data: T; }
-export interface UserRecord { _id: string; name?: string; email?: string; userId?: string; phone?: string; role?: string; avatar?: { url?: string }; createdAt?: string; isBlocked?: boolean; }
+export interface UserRecord { _id: string; name?: string; email?: string; userId?: string; phone?: string; role?: string; adminRole?: string; dob?: string; profession?: string; country?: string; city?: string; verificationInfo?: { verified: boolean }; kyc?: { status: string }; avatar?: { url?: string }; createdAt?: string; isBlocked?: boolean; }
 export interface GuardianRecord { _id: string; name: string; email: string; phone: string; relationship: string; isPrimary: boolean; status: string; createdAt?: string; user?: { _id: string; name?: string; email?: string; userId?: string }; }
 export interface Pagination { page: number; limit: number; total: number; totalPages: number; }
 export interface NewsItem { _id: string; title: string; category: string; description: string; coverImage?: { url?: string }; readTime?: string; createdAt?: string; isPublished?: boolean; }
@@ -22,10 +22,10 @@ export const verifyOtp = (email: string, otp: string) => api.post<ApiResponse<{ 
 export const resetPassword = (payload: { email: string; otp: string; newPassword: string; confirmPassword: string }) => api.post<ApiResponse<null>>("/auth/reset-password", payload).then(r => r.data);
 export const getDashboardStats = () => api.get<ApiResponse<{ totalUsers: number; totalGuardians: number; totalNews: number; chartData: { labels: string[]; totalUsers: number[]; totalGuardian: number[]; newJoined: number[] } }>>("/admin/dashboard/stats").then(r => r.data.data);
 export const getRecentUsers = () => api.get<ApiResponse<UserRecord[]>>("/admin/dashboard/recent-users").then(r => r.data.data);
-export const getUsers = (page = 1, limit = 10, search = "") => api.get<ApiResponse<{ users: UserRecord[]; pagination: Pagination }>>("/users/admin/list", { params: { page, limit, search } }).then(r => r.data.data);
+export const getUsers = (page = 1, limit = 10, search = "", filters: Record<string, string> = {}) => api.get<ApiResponse<{ users: UserRecord[]; pagination: Pagination }>>("/users/admin/list", { params: { ...filters, page, limit, search } }).then(r => r.data.data);
 export const updateUser = (id: string, payload: FormData) => api.patch<ApiResponse<UserRecord>>(`/users/admin/list/${id}`, payload).then(r => r.data);
 export const deleteUser = (id: string) => api.delete<ApiResponse<null>>(`/users/admin/list/${id}`).then(r => r.data);
-export const setUserBlocked = (id: string, isBlocked: boolean) => api.patch<ApiResponse<{ _id: string; isBlocked: boolean }>>(`/admin/users/${id}/block`, { isBlocked }).then(r => r.data);
+export const setUserBlocked = (id: string, isBlocked: boolean, reason = "Admin action") => api.patch<ApiResponse<{ _id: string; isBlocked: boolean }>>(`/admin/users/${id}/block`, { isBlocked, reason }).then(r => r.data);
 export const getGuardians = (page = 1, limit = 10, search = "") => api.get<ApiResponse<{ guardians: GuardianRecord[]; pagination: Pagination }>>("/admin/guardians", { params: { page, limit, search } }).then(r => r.data.data);
 export const getProfile = () => api.get<ApiResponse<UserRecord>>("/users/profile").then(r => r.data.data);
 export const updateProfile = (payload: FormData) => api.patch<ApiResponse<UserRecord>>("/users/update-profile", payload).then(r => r.data);

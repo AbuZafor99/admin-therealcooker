@@ -27,9 +27,11 @@ import {
   updateLearning,
 } from "@/lib/api";
 import { apiError, formatDate } from "@/lib/utils";
+import { useAdminAccess } from "@/components/admin-access";
 import { LearningAnswers } from "./learning-answers";
 
 export default function LearningPage() {
+  const access = useAdminAccess();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [answersFor, setAnswersFor] = useState<LearningItem | null>(null);
@@ -90,10 +92,10 @@ export default function LearningPage() {
                 className="border-slate-200 pl-9"
               />
             </div>
-            <Button onClick={() => setEditing(null)}>
+            {access.can("learning:write") && <Button onClick={() => setEditing(null)}>
               <Plus size={18} />
               Add new
-            </Button>
+            </Button>}
           </div>
         }
       >
@@ -136,7 +138,7 @@ export default function LearningPage() {
                 <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-400">
                   <span>{formatDate(item.createdAt)}</span>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-3">
+                {access.can("learning:write") && <div className="mt-4 grid grid-cols-2 gap-3">
                   <Button
                     size="sm"
                     variant="outline"
@@ -157,8 +159,8 @@ export default function LearningPage() {
                     <Trash2 size={15} />
                     Delete
                   </Button>
-                </div>
-                <Button className="mt-3" size="sm" variant="outline" onClick={() => setAnswersFor(item)}>View Answers</Button>
+                </div>}
+                {access.can("learning:results") && <Button className="mt-3" size="sm" variant="outline" onClick={() => setAnswersFor(item)}>View Answers</Button>}
               </div>
             </article>
           ))
