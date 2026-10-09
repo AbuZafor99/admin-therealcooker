@@ -1,7 +1,6 @@
 "use client";
 
 /* eslint-disable @next/next/no-img-element */
-/* eslint-disable react-hooks/exhaustive-deps */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,13 +23,18 @@ import {
   deleteLearning,
   getLearnings,
   LearningItem,
+  LearningQuestion,
   updateLearning,
 } from "@/lib/api";
 import { apiError, formatDate } from "@/lib/utils";
+import { useAdminAccess } from "@/components/admin-access";
+import { LearningAnswers } from "./learning-answers";
 
 export default function LearningPage() {
+  const access = useAdminAccess();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [answersFor, setAnswersFor] = useState<LearningItem | null>(null);
   const [editing, setEditing] = useState<LearningItem | null | undefined>(
     undefined
   );
@@ -88,10 +92,10 @@ export default function LearningPage() {
                 className="border-slate-200 pl-9"
               />
             </div>
-            <Button onClick={() => setEditing(null)}>
+            {access.can("learning:write") && <Button onClick={() => setEditing(null)}>
               <Plus size={18} />
               Add new
-            </Button>
+            </Button>}
           </div>
         }
       >
@@ -127,13 +131,14 @@ export default function LearningPage() {
                 <h2 className="line-clamp-1 text-lg font-semibold text-[#a48734]">
                   {item.title}
                 </h2>
+                <span className="mt-1 text-xs text-slate-500">{item.questions?.length || 0} MCQs</span>
                 <p className="mt-2 line-clamp-3 min-h-[60px] flex-1 text-sm leading-relaxed text-slate-600">
                   {item.description}
                 </p>
                 <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-3 text-xs text-slate-400">
                   <span>{formatDate(item.createdAt)}</span>
                 </div>
-                <div className="mt-4 grid grid-cols-2 gap-3">
+                {access.can("learning:write") && <div className="mt-4 grid grid-cols-2 gap-3">
                   <Button
                     size="sm"
                     variant="outline"
@@ -154,7 +159,8 @@ export default function LearningPage() {
                     <Trash2 size={15} />
                     Delete
                   </Button>
-                </div>
+                </div>}
+                {access.can("learning:results") && <Button className="mt-3" size="sm" variant="outline" onClick={() => setAnswersFor(item)}>View Answers</Button>}
               </div>
             </article>
           ))
@@ -191,6 +197,7 @@ export default function LearningPage() {
           submit={(data) => save.mutate({ id: editing?._id, data })}
         />
       )}
+      {answersFor && <LearningAnswers item={answersFor} close={() => setAnswersFor(null)} />}
     </>
   );
 }
@@ -207,6 +214,8 @@ function LearningModal({
   submit: (data: FormData) => void;
 }) {
   const [preview, setPreview] = useState(item?.image?.url || "");
+  const [questions, setQuestions] = useState<LearningQuestion[]>(item?.questions || []);
+  const changeQuestion = (index: number, changes: Partial<LearningQuestion>) => setQuestions(current => current.map((q, i) => i === index ? { ...q, ...changes } : q));
 
   return (
     <div
@@ -216,7 +225,9 @@ function LearningModal({
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          submit(new FormData(e.currentTarget));
+          const data = new FormData(e.currentTarget);
+          data.set("questions", JSON.stringify(questions));
+          submit(data);
         }}
         className="relative grid max-h-[95vh] w-full max-w-4xl gap-6 overflow-y-auto rounded-xl bg-white p-6 sm:grid-cols-[260px_1fr] sm:p-8"
       >
@@ -289,17 +300,36 @@ function LearningModal({
           </label>
 
           <label className="block text-sm font-medium text-slate-700">
-            Description *
+            Body *
             <textarea
               name="description"
               defaultValue={item?.description}
               required
               rows={6}
-              placeholder="Write the learning description or key takeaways here..."
+              placeholder="Write the learning body or key takeaways here..."
               className="mt-1.5 w-full rounded-lg border border-slate-300 p-3 text-sm outline-none transition focus:border-[#caa85a] focus:ring-2 focus:ring-[#caa85a]/20"
             />
           </label>
 
+          <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
+            <legend className="px-2 font-semibold text-slate-800">MCQ Questions ({questions.length})</legend>
+            <p className="text-xs text-slate-500">Optional. Each question has four options and one correct answer.</p>
+            {questions.map((q, index) => (
+              <div key={q._id || index} className="space-y-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center justify-between"><strong className="text-sm">Question {index + 1}</strong><Button type="button" size="sm" variant="outline" onClick={() => setQuestions(current => current.filter((_, i) => i !== index))}><Trash2 size={14} /> Remove</Button></div>
+                <Input aria-label={`Question ${index + 1}`} required value={q.question} onChange={e => changeQuestion(index, { question: e.target.value })} placeholder="Enter question" />
+                {q.options.map((option, optionIndex) => (
+                  <label key={option.id} className="flex items-center gap-2">
+                    <input type="radio" name={`correct-${index}`} required checked={q.correctOptionId === option.id} onChange={() => changeQuestion(index, { correctOptionId: option.id })} aria-label={`Mark option ${optionIndex + 1} correct for question ${index + 1}`} />
+                    <Input required aria-label={`Question ${index + 1} option ${optionIndex + 1}`} value={option.text} placeholder={`Option ${optionIndex + 1}`} onChange={e => changeQuestion(index, { options: q.options.map(o => o.id === option.id ? { ...o, text: e.target.value } : o) })} />
+                  </label>
+                ))}
+                <p className="text-xs text-slate-500">Select the circle beside the correct option.</p>
+                <Input aria-label={`Question ${index + 1} explanation`} value={q.explanation} onChange={e => changeQuestion(index, { explanation: e.target.value })} placeholder="Answer explanation (optional)" />
+              </div>
+            ))}
+            <Button type="button" variant="outline" disabled={questions.length >= 100} onClick={() => setQuestions(current => [...current, { question: "", options: ["A", "B", "C", "D"].map(id => ({ id, text: "" })), correctOptionId: "", explanation: "" }])}><Plus size={16} /> Add Question</Button>
+          </fieldset>
           <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-5">
             <Button
               type="button"
