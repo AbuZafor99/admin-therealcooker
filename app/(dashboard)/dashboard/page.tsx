@@ -3,125 +3,330 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ArrowRight, CircleAlert, Clock3, Database, RefreshCw, ShieldAlert, Users } from "lucide-react";
-import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { PageTitle } from "@/components/page-title";
+import { Activity, ChartLine, Database, GraduationCap, IdCard, Landmark, ScanEye, Search, Server } from "lucide-react";
+import { Bar, BarChart, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiError, formatDate } from "@/lib/utils";
-import { getAdminIdentity, getHealthReport, getOperationalList, getOperationalOverview, hasPermission } from "@/lib/operations";
-import type { AlertItem, CaseItem } from "@/lib/operations";
+import { useAdminAccess } from "@/components/admin-access";
+import { getExecutiveDashboard, getInfrastructure, type ExecutiveDashboard, type Infrastructure, type ServiceState } from "@/lib/operations";
+import { apiError, cn } from "@/lib/utils";
+import { bytes, card, dateTime, duration, MeterRow, MiniStat, muted, Note, number, Panel, percent, SectionLabel, StatCard, timeAgo, uptimeTone } from "@/components/dashboard-ui";
 
-type Days = 7 | 30 | 90;
-const number = (value?: number) => new Intl.NumberFormat("en").format(value ?? 0);
-const duration = (value?: number | null) => value == null ? "Not recorded" : value < 60000 ? Math.round(value / 1000) + " sec" : Math.round(value / 60000) + " min";
-const severityColor: Record<string, string> = { critical: "text-rose-700", high: "text-amber-700", elevated: "text-sky-700" };
+function PanicIcon() {
+  return <span className="text-[11px] font-extrabold tracking-tight">SOS</span>;
+}
 
-function Panel({ title, note, action, children }: { title: string; note?: string; action?: React.ReactNode; children: React.ReactNode }) {
-  return <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
-    <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
-      <div><h2 className="text-lg font-bold text-slate-900">{title}</h2>{note && <p className="mt-1 text-xs leading-5 text-slate-500">{note}</p>}</div>
-      {action}
+// Incident classification follows the incident type: a direct SOS is Critical, an "Alert Guardians"
+// request is an Elevated Guardian Panic.
+const classificationStyle: Record<string, { dot: string; label: string }> = {
+  sos: { dot: "bg-[#e5484d]", label: "Critical SOS" },
+  guardian_alert: { dot: "bg-[#d98a00]", label: "Elevated Guardian Panic" },
+};
+const alertStatusStyle: Record<string, string> = { open: "bg-[#f9d9d9] text-[#a12b2b]", acknowledged: "bg-[#f8e5b8] text-[#7a4b00]", resolved: "bg-[#dcefd8] text-[#1f6b1f]" };
+const kycStyle: Record<string, { label: string; className: string }> = {
+  pending: { label: "Pending", className: "bg-[#f8e5b8] text-[#7a4b00]" },
+  completed: { label: "Verified", className: "bg-[#dcefd8] text-[#1f6b1f]" },
+  failed: { label: "Rejected", className: "bg-[#f9d9d9] text-[#a12b2b]" },
+};
+const serviceStateLabel: Record<ServiceState, string> = { monitored: "Monitored", collecting: "Collecting data", not_configured: "Not configured", not_integrated: "Not integrated", not_monitored: "Not monitored" };
+// Listed bottom-to-top as stacked in each bar; the legend chips use the reference order instead.
+const trendSeries = [
+  { key: "activeUsers", label: "Users", color: "#1c5fa8", chip: "bg-[#d9e8fa] text-[#1d5fa7]" },
+  { key: "panics", label: "Panics", color: "#b8741a", chip: "bg-[#f6dfa6] text-[#7a5200]" },
+  { key: "alerts", label: "Alerts", color: "#e24c4b", chip: "bg-[#f9d8da] text-[#a3262c]" },
+] as const;
+const trendChips = [trendSeries[0], trendSeries[2], trendSeries[1]];
+
+function deltaText(current: number | null, previous: number | null, format: (value: number) => string, unit: "points" | "time") {
+  if (current == null || previous == null) return null;
+  const change = Math.round((current - previous) * 10) / 10;
+  if (change === 0) return { text: "No change vs last week", tone: undefined };
+  if (unit === "points") return { text: `${change > 0 ? "+" : ""}${change}% vs last week`, tone: change > 0 ? "bad" as const : "good" as const };
+  return { text: `${change > 0 ? "Up" : "Down"} from ${format(previous)}`, tone: change > 0 ? "bad" as const : "good" as const };
+}
+
+function Snapshot({ d }: { d: ExecutiveDashboard }) {
+  const s = d.snapshot;
+  return <section><SectionLabel>Platform snapshot</SectionLabel><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <StatCard label="Total users" value={number(s.totalUsers)} detail={s.newThisWeek ? `+${number(s.newThisWeek)} this week` : "No new users this week"} detailTone={s.newThisWeek ? "good" : undefined} title={`New users this week (${d.periods.week.label})`} />
+    <StatCard label="Active today" value={number(s.activeToday)} detail={`${number(s.activeThisMonth)} this month`} title={`Distinct users active in the app today and in ${d.periods.month.label}`} />
+    <StatCard label="Verified users" value={number(s.verifiedUsers)} detail={`${percent(s.verifiedPercent)} of registered`} title="Users whose KYC verification completed" />
+    <StatCard label="Bank-connected" value={number(s.bankConnected)} detail={`${percent(s.bankConnectedPercent)} of registered`} title="Users with at least one active bank account linked in the app" />
+  </div></section>;
+}
+
+function Security({ d }: { d: ExecutiveDashboard }) {
+  const { incidents } = d.status, { fraudAlerts, falsePositive, response } = d.security;
+  const breakdown = [incidents.criticalSos && `${number(incidents.criticalSos)} Critical SOS`, incidents.elevatedGuardianPanic && `${number(incidents.elevatedGuardianPanic)} Elevated Guardian Panic`].filter(Boolean).join(" · ");
+  const fpDelta = deltaText(falsePositive.rate, falsePositive.previousRate, value => `${value}%`, "points");
+  const responseDelta = deltaText(response.averageMs, response.previousAverageMs, duration, "time");
+  const weeks = `this week (${d.periods.week.label}) compared with last week (${d.periods.lastWeek.label})`;
+  return <section><SectionLabel>Security &amp; incidents</SectionLabel><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <StatCard label="Active high-risk events" value={number(incidents.active)} detail={breakdown || "No active incidents"} tone={incidents.active ? "danger" : undefined} title="Unresolved incidents: Critical SOS activations and Elevated Guardian Panic requests, each counted once" />
+    <StatCard label="Fraud alerts today" value={number(fraudAlerts.today)} detail={`${number(fraudAlerts.week)} this week · ${number(fraudAlerts.month)} this month`} tone={fraudAlerts.today ? "warning" : undefined} title={`Security alerts other than SOS and guardian panics. Week: ${d.periods.week.label}; month: ${d.periods.month.label}`} />
+    <StatCard label="False-positive rate" value={percent(falsePositive.rate)} detail={fpDelta?.text || (falsePositive.reviewed ? `${number(falsePositive.reviewed)} reviewed this week` : "No reviewed alerts this week")} detailTone={fpDelta?.tone} title={`Share of reviewed alerts marked false positive, ${weeks}`} />
+    <StatCard label="Avg response time" value={duration(response.averageMs)} detail={responseDelta?.text || (response.samples ? `Across ${number(response.samples)} alerts this week` : "No alerts actioned this week")} detailTone={responseDelta?.tone} title={`Average time from an alert to the first operator action, ${weeks}`} />
+  </div></section>;
+}
+
+function PanicEvents({ d, canAlerts }: { d: ExecutiveDashboard; canAlerts: boolean }) {
+  const p = d.panics, guardian = p.guardianAlertsToday, total = p.open + p.resolvedToday;
+  const push = guardian.push.trackedSince
+    ? `Push accepted ${number(guardian.push.accepted)} · failed ${number(guardian.push.failed)} · no device ${number(guardian.push.noDevice)}`
+    : "Push results are recorded from now on";
+  return <Panel icon={PanicIcon} title="Panic events" action={canAlerts ? { href: "/alerts?group=panic", label: "View all" } : null}>
+    <div className="grid grid-cols-2 gap-3">
+      <MiniStat label="Critical SOS" value={number(p.criticalSosToday)} detail="today" valueClass="text-[#d93636]" />
+      <MiniStat label="Guardian Panic" value={number(p.guardianPanicsToday)} detail="today" valueClass="text-[#b8741a]" />
     </div>
-    {children}
+    <div className="mt-3 rounded-xl border border-[#e4e2dc] p-3.5" title="Emergency notifications sent to guardians today. FCM 'accepted' means FCM took the message, not that the device displayed it.">
+      <div className="flex items-baseline justify-between gap-2"><p className={cn("text-[14px]", muted)}>Guardian alerts sent today</p><p className="text-[22px] font-semibold tabular-nums">{number(guardian.total)}</p></div>
+      <p className={cn("text-[13px]", muted)}>{number(guardian.fromSos)} from SOS · {number(guardian.fromGuardianPanic)} from Guardian Panic</p>
+      <p className={cn("text-[13px]", muted)}>{push}</p>
+    </div>
+    <div className="mt-5 space-y-4">
+      <MeterRow label="Open" value={number(p.open)} share={total ? p.open / total * 100 : 0} color="#e5484d" />
+      <MeterRow label="Resolved today" value={number(p.resolvedToday)} share={total ? p.resolvedToday / total * 100 : 0} color="#2f7d1f" />
+    </div>
+  </Panel>;
+}
+
+function IncidentFeed({ d, canAlerts }: { d: ExecutiveDashboard; canAlerts: boolean }) {
+  return <Panel icon={ScanEye} title="Live incident feed" action={canAlerts ? { href: "/alerts?group=panic&status=unresolved", label: "All incidents" } : null}>
+    {d.feed == null ? <Note>Your role can&apos;t view incident details.</Note> : !d.feed.length ? <Note>No incidents recorded.</Note> :
+      <div className="space-y-3">{d.feed.map(item => {
+        const style = classificationStyle[item.type] || classificationStyle.guardian_alert;
+        const subject = [item.userId && `User #${item.userId}`, item.bankName && `${item.bankName} account`].filter(Boolean).join(" · ");
+        const details = [timeAgo(item.createdAt), item.locationShared && "Location shared", item.lockedAccounts ? `${item.lockedAccounts} account${item.lockedAccounts === 1 ? "" : "s"} locked` : null].filter(Boolean).join(" · ");
+        return <div key={item.id} className="flex items-start gap-3 rounded-xl border border-[#e4e2dc] p-3.5">
+          <span className={cn("mt-2 size-2 shrink-0 rounded-full", style.dot)} />
+          <div className="min-w-0 flex-1">
+            <p className="text-[15px] leading-snug"><b>{style.label}:</b> {item.title}{subject && <> — {subject}</>}</p>
+            <p className={cn("mt-1 text-[14px]", muted)}>{details}</p>
+          </div>
+          <span className={cn("shrink-0 rounded-full px-2.5 py-0.5 text-[13px] font-medium capitalize", alertStatusStyle[item.status] || alertStatusStyle.open)}>{item.status}</span>
+        </div>;
+      })}</div>}
+  </Panel>;
+}
+
+function PlatformUptime({ d, canHealth }: { d: ExecutiveDashboard; canHealth: boolean }) {
+  return <Panel icon={Activity} title="Platform uptime" action={canHealth ? { href: "/health", label: "History" } : null}>
+    <div className="divide-y divide-[#ecebe6]">{d.services.map(service => {
+      const failing = service.state === "monitored" && service.healthyNow === false;
+      const title = [service.method || service.detail, service.samples != null && `${number(service.samples)} checks in ${d.periods.month.label}`,
+        service.state === "collecting" && service.expectedMinutes != null && `${number(service.minutes || 0)} of ${number(service.expectedMinutes)} minutes observed so far`,
+        service.lastError && `Last error: ${service.lastError}`, service.traffic && `Real sends this month: ${number(service.traffic.accepted)} accepted, ${number(service.traffic.failed)} failed`].filter(Boolean).join("\n");
+      return <div key={service.service} className="flex items-center justify-between gap-3 py-2.5 text-[16px]" title={title}>
+        <span>{service.label}</span>
+        {service.percent != null
+          ? <span className={cn("font-medium tabular-nums", failing ? "text-[#b42318]" : uptimeTone(service.percent))}>{failing && "Failing · "}{service.percent}%</span>
+          : <span className={cn("text-sm", service.state === "not_configured" ? "text-[#a15c00]" : muted)}>{serviceStateLabel[service.state]}</span>}
+      </div>;
+    })}</div>
+  </Panel>;
+}
+
+function VerifierUsage({ d, canVerify }: { d: ExecutiveDashboard; canVerify: boolean }) {
+  const v = d.verifier;
+  return <Panel icon={Search} title="Verifier tool usage" action={canVerify ? { href: "/verification", label: "Manage DB" } : null}>
+    <div className="grid grid-cols-2 gap-3">
+      <MiniStat label="Numbers searched" value={number(v.numbers)} detail={`${number(v.byType.phone)} phone · ${number(v.byType.account)} account`} />
+      <MiniStat label="Emails searched" value={number(v.byType.email)} detail="this month" />
+      <MiniStat label="Websites searched" value={number(v.byType.website)} detail="this month" />
+      <MiniStat label="Flagged results" value={number(v.byOutcome.fraudulent)} detail={v.flagRate == null ? "No searches yet" : `${v.flagRate}% flag rate`} valueClass="text-[#b42318]" />
+    </div>
+    <p className={cn("mt-4 text-[14px]", muted)} title={`All verifier searches in ${d.periods.month.label}, every supported type`}>{number(v.total)} searches this month across all types</p>
+    <div className="mt-3 space-y-4">
+      <MeterRow label="Verified" value={percent(v.share.verified)} share={v.share.verified} color="#3d7a22" />
+      <MeterRow label="Flagged" value={percent(v.share.fraudulent)} share={v.share.fraudulent} color="#e5484d" />
+      <MeterRow label="Unknown" value={percent(v.share.not_found)} share={v.share.not_found} color="#c7dcf5" />
+    </div>
+  </Panel>;
+}
+
+function LearningTool({ d, canLearning }: { d: ExecutiveDashboard; canLearning: boolean }) {
+  const l = d.learning;
+  const rows: { label: string; value: string; className?: string }[] = [
+    { label: "Modules completed", value: number(l.completed), className: "text-[#1f7a1f]" },
+    { label: "Modules not completed", value: number(l.notCompleted), className: "text-[#b42318]" },
+    { label: "Most popular module", value: l.mostPopular?.title || "—" },
+    { label: "Avg completion time", value: duration(l.averageDurationMs) },
+    { label: "Users doing extra questions", value: l.extraQuestionPercent == null ? number(l.extraQuestionUsers) : `${number(l.extraQuestionUsers)} (${l.extraQuestionPercent}%)` },
+    { label: "Completion rate", value: percent(l.completionRate), className: "text-[#1f7a1f]" },
+  ];
+  return <Panel icon={GraduationCap} title="Learning tool" action={canLearning ? { href: "/learning", label: "View content" } : null}>
+    <table className="w-full text-[16px]">
+      <thead><tr className={cn("border-b border-[#dddbd4] text-left", muted)}><th className="px-3 pb-2.5 font-normal">Metric</th><th className="px-3 pb-2.5 text-right font-normal">Value</th></tr></thead>
+      <tbody className="divide-y divide-[#ecebe6]">{rows.map(row => <tr key={row.label}><td className="px-3 py-2.5">{row.label}</td><td className={cn("px-3 py-2.5 text-right tabular-nums", row.className)}>{row.value}</td></tr>)}</tbody>
+    </table>
+    {!l.started && <p className={cn("mt-3 text-sm", muted)}>No learning modules have been started yet.</p>}
+  </Panel>;
+}
+
+function TrendOverview({ d }: { d: ExecutiveDashboard }) {
+  const [hidden, setHidden] = useState<string[]>([]);
+  const days = d.trend.map(row => ({ ...row, day: new Intl.DateTimeFormat("en", { weekday: "short", timeZone: "UTC" }).format(new Date(row.date + "T00:00:00Z")) }));
+  const visible = trendSeries.filter(series => !hidden.includes(series.key));
+  const empty = days.every(row => visible.every(series => !row[series.key]));
+  return <section className={cn(card, "p-5 sm:p-6")}>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <h2 className="flex items-center gap-2 text-[19px] font-semibold"><ChartLine size={20} strokeWidth={1.75} />Trend overview — last 7 days</h2>
+      <div className="flex flex-wrap items-center gap-2">
+        {trendChips.map(series => <button key={series.key} type="button" aria-pressed={!hidden.includes(series.key)} onClick={() => setHidden(keys => keys.includes(series.key) ? keys.filter(key => key !== series.key) : [...keys, series.key])}
+          className={cn("rounded-full px-3.5 py-1 text-[15px] transition", series.chip, hidden.includes(series.key) && "opacity-40")}>{series.label}</button>)}
+        <Link href="/analytics" className="ml-2 text-[16px] text-[#1d5fa7] hover:underline">Full analytics</Link>
+      </div>
+    </div>
+    <div className="relative h-40">
+      <ResponsiveContainer width="100%" height="100%">
+        <BarChart data={days} barCategoryGap={6} margin={{ top: 0, right: 0, bottom: 0, left: 0 }}>
+          <XAxis dataKey="day" orientation="top" axisLine={false} tickLine={false} tick={{ fontSize: 15, fill: "#6f6f68" }} />
+          <Tooltip cursor={{ fill: "rgba(0,0,0,.04)" }} labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ""} />
+          {visible.map(series => <Bar key={series.key} dataKey={series.key} name={series.label} stackId="day" fill={series.color} stroke="#fff" strokeWidth={2} />)}
+        </BarChart>
+      </ResponsiveContainer>
+      {empty && <p className={cn("absolute inset-x-0 top-1/2 text-center text-sm", muted)}>No activity in the last 7 days.</p>}
+    </div>
   </section>;
 }
 
-function Metric({ label, value, detail, href, icon: Icon, urgent }: { label: string; value: string | number; detail: string; href?: string; icon: typeof Users; urgent?: boolean }) {
-  const body = <div className={"h-full rounded-2xl border border-slate-200 border-l-4 bg-white p-5 shadow-sm transition hover:shadow-md " + (urgent ? "border-l-rose-500" : "border-l-teal-600")}>
-    <div className="flex items-start justify-between gap-2"><span className="text-sm font-semibold text-slate-600">{label}</span><Icon size={20} className="shrink-0 text-slate-400" /></div>
-    <p className="mt-4 text-3xl font-bold tracking-tight text-slate-950">{value}</p>
-    <p className="mt-2 text-xs leading-5 text-slate-500">{detail}</p>
-    {href && <span className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-teal-700">View records <ArrowRight size={13}/></span>}
-  </div>;
-  return href ? <Link href={href} className="block h-full focus-visible:rounded-2xl focus-visible:outline-2 focus-visible:outline-teal-600">{body}</Link> : body;
+function KycQueue({ d, canUsers }: { d: ExecutiveDashboard; canUsers: boolean }) {
+  const k = d.kyc;
+  return <Panel icon={IdCard} title="KYC queue" action={canUsers ? { href: "/users?kyc=pending", label: "Review all" } : null}>
+    <div className="grid grid-cols-3 gap-3 text-center">
+      {[{ label: "Pending", value: k.pending, className: "text-[#7a4b00]" }, { label: "Verified", value: k.verified, className: "text-[#1f6b1f]" }, { label: "Rejected", value: k.rejected, className: "text-[#9b2226]" }].map(item =>
+        <div key={item.label} className="rounded-xl border border-[#e4e2dc] px-2 py-4"><p className={cn("text-[30px] font-semibold leading-tight tabular-nums", item.className)}>{number(item.value)}</p><p className={cn("text-[15px]", muted)}>{item.label}</p></div>)}
+    </div>
+    {k.recent == null ? <Note>Your role can&apos;t view user details.</Note> : !k.recent.length ? <Note>No KYC submissions yet.</Note> :
+      <table className="mt-5 w-full text-[15px]">
+        <thead><tr className={cn("border-b border-[#dddbd4] text-left", muted)}><th className="pb-2.5 font-normal">User</th><th className="pb-2.5 font-normal">Submitted</th><th className="pb-2.5 font-normal">Status</th></tr></thead>
+        <tbody className="divide-y divide-[#ecebe6]">{k.recent.map(user => <tr key={user.id}>
+          <td className="py-2.5 pr-3"><span className="block max-w-[180px] truncate">{user.name || "Unnamed user"}</span>{user.userId && <span className={cn("text-[13px]", muted)}>#{user.userId}</span>}</td>
+          <td className={cn("py-2.5 pr-3", !user.submittedAt && muted)} title={user.submittedAt ? undefined : "Submitted before submission times were recorded"}>{user.submittedAt ? dateTime(user.submittedAt) : "Not recorded"}</td>
+          <td className="py-2.5"><span className={cn("rounded-full px-2.5 py-0.5 text-[13px] font-medium", kycStyle[user.status]?.className)}>{kycStyle[user.status]?.label || user.status}</span></td>
+        </tr>)}</tbody>
+      </table>}
+  </Panel>;
 }
 
-function Bars({ rows, keyName = "count", empty = "No records available" }: { rows: { label: string; count?: number; users?: number }[]; keyName?: "count" | "users"; empty?: string }) {
-  const visible = rows.filter(row => (row[keyName] ?? 0) > 0);
-  if (!visible.length) return <p className="py-8 text-center text-sm text-slate-500">{empty}</p>;
-  const max = Math.max(...visible.map(row => row[keyName] ?? 0));
-  return <div className="space-y-3">{visible.map((row, index) =>
-    <div key={row.label + index} className="grid grid-cols-[100px_1fr_36px] items-center gap-2 text-xs sm:grid-cols-[130px_1fr_44px]">
-      <span className="truncate font-medium text-slate-700" title={row.label}>{row.label}</span>
-      <div className="h-2.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-teal-600" style={{ width: Math.max(4, (row[keyName] ?? 0) / max * 100) + "%" }}/></div>
-      <span className="text-right tabular-nums text-slate-600">{number(row[keyName])}</span>
-    </div>)}</div>;
+function UsersByBank({ d, canAccounts }: { d: ExecutiveDashboard; canAccounts: boolean }) {
+  return <Panel icon={Landmark} title="Users by bank" action={canAccounts ? { href: "/accounts", label: "Full breakdown" } : null}>
+    {!d.banks.rows.length ? <Note>No bank-connected users yet.</Note> :
+      <div className="space-y-4">{d.banks.rows.map(row => <div key={row.bank} title={`${number(row.users)} of ${number(d.banks.connectedUsers)} bank-connected users`}>
+        <div className="flex items-center justify-between text-[16px]"><span className="truncate pr-3">{row.bank}</span><span className="tabular-nums">{percent(row.percent)}</span></div>
+        <div className="mt-1.5 h-1.5 rounded-full bg-[#f0efea]"><div className="h-full rounded-full bg-[#c7dcf5]" style={{ width: `${row.percent ?? 0}%` }} /></div>
+      </div>)}</div>}
+  </Panel>;
 }
 
-function TrendAxis() {
-  return <><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="date" tickFormatter={(date: string) => date.slice(5)} tick={{ fontSize: 11 }}/><YAxis allowDecimals={false} tick={{ fontSize: 11 }}/><Tooltip/><Legend/></>;
+function uptime(seconds: number) {
+  const days = Math.floor(seconds / 86400), hours = Math.floor(seconds % 86400 / 3600);
+  return days ? `${days}d ${hours}h` : `${hours}h ${Math.floor(seconds % 3600 / 60)}m`;
+}
+const share = (part: number, total: number) => total ? Math.round(part / total * 1000) / 10 : null;
+
+function DetailRows({ rows }: { rows: { label: string; value: string; title?: string; muted?: boolean }[] }) {
+  return <div className="mt-4 divide-y divide-[#ecebe6] text-[15px]">{rows.map(row => <div key={row.label} className="flex items-center justify-between gap-3 py-2" title={row.title}>
+    <span>{row.label}</span><span className={cn("text-right tabular-nums", row.muted && muted)}>{row.value}</span>
+  </div>)}</div>;
+}
+
+// Measurements of the machine running the API. Host memory is the whole server; process memory is the API alone.
+function BackendServer({ infra }: { infra: Infrastructure }) {
+  const { server } = infra, latest = server.latest;
+  if (!latest) return <Panel icon={Server} title="Backend server"><Note>No server measurements yet; the first sample is taken within a minute of the API starting.</Note></Panel>;
+  const used = latest.host.memoryTotal - latest.host.memoryFree, memoryPercent = share(used, latest.host.memoryTotal);
+  const diskUsed = latest.disk ? latest.disk.total - latest.disk.free : null;
+  const gpu = server.gpu.status === "available" && latest.gpus?.length
+    ? latest.gpus.map(item => `${item.name}: ${item.utilizationPercent}% · ${bytes(item.memoryUsed)} of ${bytes(item.memoryTotal)}`).join("; ")
+    : server.gpu.status === "unknown" ? "Checking" : "Not available on this host";
+  return <Panel icon={Server} title="Backend server">
+    <div className="grid grid-cols-2 gap-3">
+      <MiniStat label="CPU (whole host)" value={latest.host.cpuPercent == null ? "—" : `${latest.host.cpuPercent}%`} detail={latest.host.cpuPercent == null ? "Measuring…" : `${latest.host.cores} cores${latest.host.loadAverage != null ? ` · load ${latest.host.loadAverage}` : ""}`} />
+      <MiniStat label="Memory (whole host)" value={percent(memoryPercent)} detail={`${bytes(used)} of ${bytes(latest.host.memoryTotal)} used`} />
+    </div>
+    {server.series.length > 1
+      ? <div className="mt-4 h-28" title="15-minute averages over the last 24 hours"><ResponsiveContainer width="100%" height="100%">
+          <LineChart data={server.series} margin={{ top: 4, right: 4, bottom: 0, left: 4 }}>
+            <XAxis dataKey="at" hide /><YAxis domain={[0, 100]} hide />
+            <Tooltip labelFormatter={value => dateTime(String(value))} formatter={(value, name) => [`${value}%`, name]} />
+            <Line type="monotone" dataKey="cpuPercent" name="CPU" stroke="#1c5fa8" strokeWidth={2} dot={false} connectNulls />
+            <Line type="monotone" dataKey="memoryPercent" name="Memory" stroke="#b8741a" strokeWidth={2} dot={false} connectNulls />
+          </LineChart>
+        </ResponsiveContainer></div>
+      : <p className={cn("mt-4 text-[14px]", muted)}>The 24-hour trend appears once there are measurements across at least two 15-minute intervals.</p>}
+    <DetailRows rows={[
+      { label: "API process memory", value: bytes(latest.process.rss), title: "Resident memory of the Node.js API process only" },
+      { label: "API process CPU", value: latest.process.cpuPercent == null ? "—" : `${latest.process.cpuPercent}%`, title: "Share of the whole host's CPU capacity used by the API process" },
+      ...(latest.container ? [{ label: "Container memory", value: `${bytes(latest.container.memoryUsage)} of ${bytes(latest.container.memoryLimit)}` }] : []),
+      { label: "Disk", value: latest.disk && diskUsed != null ? `${bytes(diskUsed)} of ${bytes(latest.disk.total)} (${percent(share(diskUsed, latest.disk.total))})` : "Not available" },
+      { label: "GPU", value: gpu, muted: server.gpu.status !== "available" },
+      { label: "Uptime", value: `Host ${uptime(latest.host.uptimeSeconds)} · API ${uptime(latest.process.uptimeSeconds)}` },
+    ]} />
+    <p className={cn("mt-3 text-[13px]", muted)}>{server.environment} · {server.platform}/{server.arch} · Node {server.nodeVersion.replace(/^v/, "")} · measured {dateTime(latest.checkedAt)}{server.trackingSince ? ` · history from ${dateTime(server.trackingSince)}` : ""}</p>
+  </Panel>;
+}
+
+// Stored data, disk storage and server memory are different measurements and are shown separately.
+function DatabasePanel({ infra }: { infra: Infrastructure }) {
+  const db = infra.database;
+  if (!db) return <Panel icon={Database} title="Database"><Note>{infra.databaseError || "Database statistics are unavailable."}</Note></Panel>;
+  return <Panel icon={Database} title={db.provider}>
+    <div className="grid grid-cols-2 gap-3">
+      <MiniStat label="Data stored" value={bytes(db.dataSize)} detail="uncompressed documents" />
+      <MiniStat label="Storage used" value={bytes(db.storageSize)} detail="on disk, compressed" />
+      <MiniStat label="Index size" value={bytes(db.indexSize)} detail="all indexes" />
+      <MiniStat label="Documents" value={number(db.objects)} detail={`${number(db.collections)} collections`} />
+    </div>
+    <DetailRows rows={[
+      { label: "Server memory", value: db.memory ? bytes(db.memory.residentBytes) : "Not available", muted: !db.memory, title: db.memoryUnavailableReason || "Resident memory of the database server process" },
+      { label: "Server CPU", value: "Not available", muted: true, title: db.cpuUnavailableReason },
+      { label: "Cluster disk capacity", value: db.filesystem ? `${bytes(db.filesystem.used)} of ${bytes(db.filesystem.total)}` : "Not reported by this tier", muted: !db.filesystem },
+      { label: "Connections", value: db.connections ? `${number(db.connections.current)} open${db.connections.available != null ? ` · ${number(db.connections.available)} available` : ""}` : "Not available", muted: !db.connections },
+      { label: "Replica set", value: db.replicaSet ? `${db.replicaSet.members ?? "?"} members · primary ${db.replicaSet.writablePrimary ? "writable" : "not writable"}` : "Standalone" },
+    ]} />
+    <p className={cn("mt-3 text-[13px]", muted)}>{db.version ? `Version ${db.version} · ` : ""}measured {dateTime(db.checkedAt)} · refreshed every 5 minutes</p>
+  </Panel>;
+}
+
+function InfrastructureSection({ enabled }: { enabled: boolean }) {
+  const query = useQuery({ queryKey: ["infrastructure"], queryFn: getInfrastructure, enabled, refetchInterval: 60_000 });
+  if (!enabled) return null;
+  return <section><SectionLabel>Infrastructure</SectionLabel>
+    {query.isLoading ? <div className="grid gap-4 lg:grid-cols-2"><Skeleton className="h-80 rounded-2xl" /><Skeleton className="h-80 rounded-2xl" /></div>
+      : !query.data ? <div role="alert" className="rounded-2xl border border-[#e9a7ac] bg-[#f9d8da] p-5 text-sm text-[#8f1d24]">Infrastructure measurements could not load: {apiError(query.error)}</div>
+      : <div className="grid gap-4 lg:grid-cols-2"><BackendServer infra={query.data} /><DatabasePanel infra={query.data} /></div>}
+  </section>;
 }
 
 export default function DashboardPage() {
-  const [days, setDays] = useState<Days>(30);
-  const identity = useQuery({ queryKey: ["admin-identity"], queryFn: getAdminIdentity, staleTime: 300000 });
-  const overview = useQuery({ queryKey: ["operational-overview", days], queryFn: () => getOperationalOverview(days), refetchInterval: 60000 });
-  const canAlerts = hasPermission(identity.data, "alerts:read");
-  const canCases = hasPermission(identity.data, "cases:read");
-  const health = useQuery({ queryKey: ["operational-health", days], queryFn: () => getHealthReport(days), enabled: hasPermission(identity.data, "health:read"), refetchInterval: 60000 });
-  const alerts = useQuery({ queryKey: ["dashboard-alerts"], queryFn: () => getOperationalList<AlertItem>("alerts", { page: 1, limit: 5, status: "unresolved" }), enabled: canAlerts, refetchInterval: 60000 });
-  const cases = useQuery({ queryKey: ["dashboard-cases"], queryFn: () => getOperationalList<CaseItem>("cases", { page: 1, limit: 5, status: "unresolved" }), enabled: canCases, refetchInterval: 60000 });
-  const s = overview.data;
-  const highRisk = s?.alerts.risk.filter(row => row._id === "critical" || row._id === "high").reduce((sum, row) => sum + row.count, 0) ?? 0;
-  const bankRows = s?.accounts.banks.map(row => ({ label: row.bank || "Unspecified", users: row.users })) ?? [];
-  const usage = s?.verification.usage.map(row => ({ label: row._id === "phone" ? "Phone" : row._id, count: row.count })) ?? [];
-  const sources = s?.verification.sources.map(row => ({ label: row._id, count: row.count })) ?? [];
-  const healthTrends = Object.values((health.data?.trends ?? []).reduce<Record<string, Record<string, string | number>>>((daysByDate, row) => {
-    (daysByDate[row.date] ??= { date: row.date })[row.service] = row.uptime;
-    return daysByDate;
-  }, {})).sort((left, right) => String(left.date).localeCompare(String(right.date)));
-  const healthColors = ["#0f766e", "#b88727", "#be123c", "#2563eb", "#7c3aed"];
+  const access = useAdminAccess();
+  const query = useQuery({ queryKey: ["executive-dashboard"], queryFn: getExecutiveDashboard, refetchInterval: 60_000 });
+  const d = query.data;
+
+  if (query.isLoading) return <div className="space-y-6">{[4, 4, 3, 2].map((count, index) =>
+    <div key={index} className={cn("grid gap-4", count === 4 ? "sm:grid-cols-2 xl:grid-cols-4" : count === 3 ? "xl:grid-cols-3" : "lg:grid-cols-2")}>{Array.from({ length: count }, (_, item) => <Skeleton key={item} className={cn("rounded-2xl", count === 4 ? "h-32" : "h-72")} />)}</div>)}</div>;
+  if (!d) return <div role="alert" className="rounded-2xl border border-[#e9a7ac] bg-[#f9d8da] p-5 text-sm text-[#8f1d24]">Dashboard data could not load: {apiError(query.error)} <button onClick={() => void query.refetch()} className="font-semibold underline">Retry</button></div>;
 
   return <div className="space-y-6">
-    <PageTitle action={<div className="flex items-center gap-2">
-      <div className="flex rounded-xl border border-slate-200 bg-white p-1" aria-label="Reporting period">{([7,30,90] as Days[]).map(value =>
-        <button key={value} type="button" aria-pressed={days === value} onClick={() => setDays(value)} className={"rounded-lg px-3 py-2 text-sm font-semibold " + (days === value ? "bg-teal-700 text-white" : "text-slate-600 hover:bg-slate-100")}>{value} days</button>)}</div>
-      <button type="button" title="Refresh dashboard" aria-label="Refresh dashboard" onClick={() => { void overview.refetch(); void health.refetch(); void alerts.refetch(); void cases.refetch(); }} className="rounded-xl border border-slate-200 bg-white p-2.5 text-slate-600 hover:bg-slate-50"><RefreshCw size={18}/></button>
-    </div>}>Operations overview</PageTitle>
-
-    <div className="rounded-2xl bg-slate-900 p-5 text-white sm:flex sm:items-center sm:justify-between sm:p-6">
-      <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-teal-300">MoneyKee control centre</p><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-200">Prioritise incidents, understand platform usage, and inspect the records behind each measure.</p></div>
-      <div className="mt-4 text-xs text-slate-300 sm:mt-0 sm:text-right">{s ? <>Updated {new Date(s.generatedAt).toLocaleString()}<br/>Reporting timezone: {s.timezone}</> : "Loading snapshot..."}</div>
+    {query.isError && <div role="alert" className="rounded-2xl border border-[#e7b64e] bg-[#fbecc5] p-4 text-sm text-[#7a4b00]">Showing data from {dateTime(d.generatedAt)}; the latest refresh failed: {apiError(query.error)}</div>}
+    <Snapshot d={d} />
+    <Security d={d} />
+    <div className="grid gap-4 xl:grid-cols-3">
+      <PanicEvents d={d} canAlerts={access.can("alerts:read")} />
+      <IncidentFeed d={d} canAlerts={access.can("alerts:read")} />
+      <PlatformUptime d={d} canHealth={access.can("health:read")} />
     </div>
-    {overview.isError && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-sm text-rose-800">Operational data could not load: {apiError(overview.error)} <button onClick={() => void overview.refetch()} className="font-semibold underline">Retry</button></div>}
-    {overview.isLoading && <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="h-36 rounded-2xl"/>)}</div>}
-
-    {s && <>
-      <section><h2 className="mb-3 text-xs font-bold uppercase tracking-[.12em] text-slate-500">Needs attention</h2><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric label="High + critical alerts" value={number(highRisk)} detail="Unresolved security alerts" urgent icon={ShieldAlert} href={canAlerts ? "/operations?tab=alerts&status=unresolved" : undefined}/>
-        <Metric label="Open panic alerts" value={number(s.panics.open)} detail={number(s.panics.today) + " activations today"} urgent icon={CircleAlert} href={canAlerts ? "/operations?tab=alerts&status=unresolved&group=panic" : undefined}/>
-        <Metric label="Open cases" value={number(s.cases.open)} detail={number(s.cases.resolved) + " resolved in the selected period"} urgent icon={Database} href={canCases ? "/operations?tab=cases&status=unresolved" : undefined}/>
-        <Metric label="First response" value={duration(s.alerts.averageResponseMs)} detail={"Average of " + number(s.alerts.responseSampleCount) + " acted-on alerts"} icon={Clock3} href={canAlerts ? "/operations?tab=alerts" : undefined}/>
-      </div></section>
-      <section><h2 className="mb-3 text-xs font-bold uppercase tracking-[.12em] text-slate-500">People and accounts</h2><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        <Metric label="Registered users" value={number(s.users.total)} detail={"+" + number(s.users.newToday) + " today · +" + number(s.users.new7) + " / 7d · +" + number(s.users.new30) + " / 30d"} icon={Users} href={hasPermission(identity.data, "users:read") ? "/users" : undefined}/>
-        <Metric label="Active users" value={number(s.users.dau)} detail={"DAU · " + number(s.users.wau) + " WAU · " + number(s.users.mau) + " MAU"} icon={Activity}/>
-        <Metric label="KYC verified" value={s.users.kycVerifiedPercent + "%"} detail={number(s.users.kycVerified) + " people · email verified " + s.users.emailVerifiedPercent + "%"} icon={Users}/>
-        <Metric label="Users with bank entries" value={number(s.accounts.bankLinkedUsers)} detail={s.accounts.bankLinkedPercent + "% · manually linked records"} icon={Database} href={hasPermission(identity.data, "accounts:read") ? "/operations?tab=accounts" : undefined}/>
-        <Metric label="Active account records" value={number(s.accounts.active)} detail="App records marked active, including wallets" icon={Database} href={hasPermission(identity.data, "accounts:read") ? "/operations?tab=accounts" : undefined}/>
-        <Metric label="Protective actions" value={number(s.protectiveActions)} detail={"Recorded in " + days + " days"} icon={ShieldAlert} href={hasPermission(identity.data, "events:read") ? "/operations?tab=events&kind=protective_action" : undefined}/>
-      </div></section>
-      <section className="grid gap-5 2xl:grid-cols-2">
-        <Panel title="User growth and activity" note="Daily new registrations and distinct active users, in UTC."><div className="h-72"><ResponsiveContainer width="100%" height="100%"><ComposedChart data={s.trends}><defs><linearGradient id="userFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0f766e" stopOpacity={.25}/><stop offset="100%" stopColor="#0f766e" stopOpacity={0}/></linearGradient></defs><TrendAxis/><Area name="Active users" type="monotone" dataKey="activeUsers" stroke="#0f766e" fill="url(#userFill)" strokeWidth={2}/><Line name="New users" type="monotone" dataKey="newUsers" stroke="#c58d2f" strokeWidth={2} dot={false}/></ComposedChart></ResponsiveContainer></div></Panel>
-        <Panel title="Security events" note="Alerts generated, confirmed incidents, and panic activations per day." action={canAlerts ? <Link href="/operations?tab=alerts" className="text-sm font-semibold text-teal-700">Explore alerts →</Link> : undefined}><div className="h-72"><ResponsiveContainer width="100%" height="100%"><BarChart data={s.trends}><TrendAxis/><Bar name="Alerts" dataKey="alerts" fill="#e66b69"/><Bar name="Confirmed" dataKey="confirmed" fill="#9f1239"/><Bar name="Panics" dataKey="panics" fill="#d4a64a"/></BarChart></ResponsiveContainer></div></Panel>
-        <Panel title="Response and resolution" note="Recorded protective actions and cases resolved each day." action={canCases ? <Link href="/operations?tab=cases" className="text-sm font-semibold text-teal-700">Explore cases →</Link> : undefined}><div className="h-72"><ResponsiveContainer width="100%" height="100%"><LineChart data={s.trends}><TrendAxis/><Line name="Protective actions" type="monotone" dataKey="protective" stroke="#0f766e" strokeWidth={2} dot={false}/><Line name="Cases resolved" type="monotone" dataKey="resolvedCases" stroke="#b88727" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div></Panel>
-        <Panel title="Alert severity and review" note={number(s.alerts.today) + " alerts today · " + number(s.alerts.last7) + " in 7 days · " + number(s.alerts.last30) + " in 30 days"}><div className="grid grid-cols-3 gap-3">{["critical","high","elevated"].map(level => <div key={level} className="rounded-xl bg-slate-50 p-4 text-center"><div className={"text-3xl font-bold " + severityColor[level]}>{number(s.alerts.risk.find(row => row._id === level)?.count)}</div><div className="mt-2 text-sm capitalize text-slate-600">{level}</div></div>)}</div><p className="mt-5 border-t pt-4 text-sm text-slate-600">False positives: <strong>{number(s.alerts.falsePositive)}</strong> of {number(s.alerts.reviewed)} reviewed ({s.alerts.falsePositiveRate}%).</p><div className="mt-4 border-t pt-4"><p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Panic activations by type</p><Bars rows={s.panics.byType.map(row => ({ label: row.label.replaceAll("_", " "), count: row.count }))} empty="No recorded panic activations"/></div></Panel>
-      </section>
-      <section className="grid gap-5 2xl:grid-cols-3">
-        <Panel title="Users by bank" note="Distinct users with active, manually linked bank records."><Bars rows={bankRows.slice(0,10)} keyName="users"/></Panel>
-        <Panel title="Verify tool usage" note={"Lookups in the selected " + days + "-day period."}><Bars rows={usage}/><div className="mt-5 border-t pt-4"><p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Data source</p><Bars rows={sources}/></div></Panel>
-        <Panel title="User profile coverage" note="Aggregated optional profile details."><p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Age groups</p><Bars rows={s.users.profiles.ages}/><p className="mt-2 text-xs text-slate-500">Age unavailable for {number(s.users.profiles.ageUnknown)} users.</p><div className="mt-5 border-t pt-4"><p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Active accounts per user</p><Bars rows={s.users.profiles.accountCounts} keyName="users"/></div></Panel>
-      </section>
-      <section className="grid gap-5 2xl:grid-cols-2"><Panel title="Professions" note="Top values entered in user profiles."><Bars rows={s.users.profiles.professions}/></Panel><Panel title="Geography" note="Top countries entered in user profiles."><Bars rows={s.users.profiles.countries}/></Panel></section>
-      <section className="grid gap-5 2xl:grid-cols-2">
-        <Panel title="Learning quizzes" note="All-time quiz opens and submissions; lesson reading is not yet tracked." action={hasPermission(identity.data, "learning:read") ? <Link href="/learning" className="text-sm font-semibold text-teal-700">Open learning →</Link> : undefined}><div className="grid grid-cols-3 gap-3 text-center">{[{ label: "Started", value: s.learning.started }, { label: "Submitted", value: s.learning.completed }, { label: "Incomplete", value: s.learning.incomplete }].map(row => <div key={row.label} className="rounded-xl bg-teal-50 p-4"><div className="text-2xl font-bold text-teal-800">{number(row.value)}</div><div className="mt-1 text-xs text-slate-600">{row.label}</div></div>)}</div><p className="mt-5 text-sm text-slate-600">Average quiz time: <strong>{duration(s.learning.averageDurationMs)}</strong> · Repeat quiz users: <strong>{number(s.learning.additionalQuestionUsers)}</strong> · Attempts this period: <strong>{number(s.learning.attempts)}</strong></p><div className="mt-5 border-t pt-4"><p className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Most attempted lessons</p><Bars rows={s.learning.popular.map(row => ({ label: row.title || "Untitled", count: row.users }))} empty="No quiz attempts in this period"/></div></Panel>
-        <Panel title="Service health samples" note="Checks observed while the backend runs; not an external uptime guarantee." action={hasPermission(identity.data, "health:read") ? <Link href="/operations?tab=health" className="text-sm font-semibold text-teal-700">Health details →</Link> : undefined}>{health.isLoading ? <Skeleton className="h-56"/> : health.isError ? <p className="text-sm text-rose-700">{apiError(health.error)}</p> : health.data?.services.length ? <><div className="space-y-3">{health.data.services.map(service => <div key={service.service} className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm"><span className="font-medium capitalize">{service.service}</span><span className="text-right"><b className={service.available ? "text-teal-700" : "text-rose-700"}>{service.uptime}% healthy</b><small className="block text-slate-500">{number(service.samples)} samples · last {formatDate(service.checkedAt)}</small></span></div>)}</div><div className="mt-5 h-40"><ResponsiveContainer width="100%" height="100%"><LineChart data={healthTrends}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="date" tickFormatter={(date: string) => date.slice(5)} tick={{ fontSize: 11 }}/><YAxis domain={[0,100]} tick={{ fontSize: 11 }}/><Tooltip/><Legend/>{health.data.services.map((service, index) => <Line key={service.service} name={service.service} dataKey={service.service} stroke={healthColors[index % healthColors.length]} strokeWidth={2} connectNulls dot={false}/>)}</LineChart></ResponsiveContainer></div></> : <p className="py-10 text-center text-sm text-slate-500">No health samples available.</p>}</Panel>
-      </section>
-      {(canAlerts || canCases) && <section className="grid gap-5 2xl:grid-cols-2">
-        {canAlerts && <Panel title="Unresolved alerts" note="Most recent records requiring review." action={<Link href="/operations?tab=alerts&status=unresolved" className="text-sm font-semibold text-teal-700">See all →</Link>}>{alerts.isLoading ? <Skeleton className="h-40"/> : alerts.isError ? <p className="text-sm text-rose-700">{apiError(alerts.error)}</p> : alerts.data?.items.length ? <div className="divide-y">{alerts.data.items.map(alert => <Link key={alert._id} href="/operations?tab=alerts&status=unresolved" className="flex items-center justify-between gap-4 py-3 text-sm hover:text-teal-700"><span className="min-w-0"><strong className="block truncate">{alert.title}</strong><small className="text-slate-500">{alert.type.replaceAll("_"," ")} · {formatDate(alert.createdAt)}</small></span><span className="rounded-full bg-rose-50 px-2 py-1 text-xs capitalize text-rose-700">{alert.severity}</span></Link>)}</div> : <p className="py-8 text-center text-sm text-slate-500">No unresolved alerts.</p>}</Panel>}
-        {canCases && <Panel title="Open cases" note="Current support and security workload." action={<Link href="/operations?tab=cases&status=unresolved" className="text-sm font-semibold text-teal-700">See all →</Link>}>{cases.isLoading ? <Skeleton className="h-40"/> : cases.isError ? <p className="text-sm text-rose-700">{apiError(cases.error)}</p> : cases.data?.items.length ? <div className="divide-y">{cases.data.items.map(item => <Link key={item._id} href="/operations?tab=cases&status=unresolved" className="flex items-center justify-between gap-4 py-3 text-sm hover:text-teal-700"><span className="min-w-0"><strong className="block truncate">{item.title}</strong><small className="text-slate-500">{item.user?.name || "No user linked"} · {formatDate(item.createdAt)}</small></span><span className="rounded-full bg-amber-50 px-2 py-1 text-xs capitalize text-amber-700">{item.status.replaceAll("_"," ")}</span></Link>)}</div> : <p className="py-8 text-center text-sm text-slate-500">No open cases.</p>}</Panel>}
-      </section>}
-      <p className="pb-4 text-xs leading-5 text-slate-500">Tracking began {s.trackingStartedAt ? formatDate(s.trackingStartedAt) : "when operational events were recorded"}. Earlier activity may be incomplete. Bank entries are user-entered and do not prove a live connection. Alert Security and Lock All Accounts are not yet sent by the mobile app.</p>
-    </>}
+    <div className="grid gap-4 lg:grid-cols-2">
+      <VerifierUsage d={d} canVerify={access.can("verification:read")} />
+      <LearningTool d={d} canLearning={access.can("learning:read")} />
+    </div>
+    <TrendOverview d={d} />
+    <div className="grid gap-4 lg:grid-cols-2">
+      <KycQueue d={d} canUsers={access.can("users:read")} />
+      <UsersByBank d={d} canAccounts={access.can("accounts:read")} />
+    </div>
+    <InfrastructureSection enabled={access.can("health:read")} />
+    <p className={cn("pb-2 text-xs leading-5", muted)}>Updated {dateTime(d.generatedAt)} · refreshes every minute. Times are {d.timezone}; &ldquo;this week&rdquo; is {d.periods.week.label} (Sunday to Saturday) and &ldquo;this month&rdquo; is {d.periods.month.label}. Bank connections are accounts users entered in the app, not live bank links.</p>
   </div>;
 }
