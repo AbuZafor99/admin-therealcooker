@@ -6,7 +6,7 @@ export interface OperationItem {
   user?: UserRecord; actor?: UserRecord; assignedTo?: UserRecord; reviewedBy?: UserRecord; resolvedBy?: UserRecord;
   alert?: { _id: string; title: string }; notes?: { body: string; actor?: UserRecord; at: string }[];
   type?: string; severity?: string; status?: string; verdict?: string; resolution?: string;
-  kind?: string; source?: string; tool?: string; outcome?: string; reason?: string;
+  kind?: string; source?: string; tool?: string; outcome?: string; reason?: string; maskedValue?: string;
   action?: string; resource?: string; resourceId?: string;
   changes?: Record<string, string | boolean>;
   bankName?: string; nickname?: string; accountType?: string; isLocked?: boolean; lockedReason?: string;

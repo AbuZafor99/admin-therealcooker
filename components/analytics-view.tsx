@@ -14,7 +14,7 @@ import { apiError, cn } from "@/lib/utils";
 const nextDay = (iso: string) => new Date(Date.parse(iso + "T00:00:00Z") + 86_400_000).toISOString().slice(0, 10);
 const versus = (current: number, previous: number) => `Previous: ${number(previous)}${current !== previous ? ` (${current > previous ? "+" : ""}${number(current - previous)})` : ""}`;
 const searchLabels: Record<SearchType, string> = { phone: "Phone number", account: "Bank account number", email: "Email address", website: "Website" };
-const stateLabel: Record<string, string> = { monitored: "Monitored", collecting: "Collecting data", not_configured: "Not configured", not_integrated: "Not integrated", not_monitored: "Not monitored" };
+const stateLabel: Record<string, string> = { monitored: "Monitored", collecting: "Collecting data", not_configured: "Not configured" };
 const dailySeries = [
   { key: "activeUsers", label: "Active users", color: "#1c5fa8" },
   { key: "newUsers", label: "New users", color: "#5b9bd5" },
@@ -82,7 +82,7 @@ function Report({ r }: { r: AnalyticsReport }) {
           <MiniStat label="KYC submitted / completed" value={`${number(r.users.period.kycSubmitted)} / ${number(r.users.period.kycCompleted)}`} detail={`Previous: ${number(r.users.previous.kycSubmitted)} / ${number(r.users.previous.kycCompleted)}`} />
           <MiniStat label="Bank accounts / wallets linked" value={`${number(r.users.period.accountsLinked.bank)} / ${number(r.users.period.accountsLinked.wallet)}`} detail={`Previous: ${number(r.users.previous.accountsLinked.bank)} / ${number(r.users.previous.accountsLinked.wallet)}`} />
         </div>
-        <div className="mt-4 flex items-center gap-2 text-[15px]"><GraduationCap size={18} strokeWidth={1.75} />Learning: {number(r.learning.started)} modules started · {number(r.learning.completed)} completed · avg {duration(r.learning.averageDurationMs)}</div>
+        <div className="mt-4 flex items-center gap-2 text-[15px]"><GraduationCap size={18} strokeWidth={1.75} />Learning: {number(r.learning.opened)} opened · {number(r.learning.completed)} completed · {number(r.learning.notCompleted)} not completed · {percent(r.learning.completionRate)} completion{r.learning.mostPopular?.title ? ` · most popular: ${r.learning.mostPopular.title}` : ""}</div>
       </Panel>
     </div>
 
@@ -120,7 +120,7 @@ function Report({ r }: { r: AnalyticsReport }) {
           ["Host CPU (avg / peak)", `${percent(s.averageCpuPercent ?? null)} / ${percent(s.peakCpuPercent ?? null)}`],
           ["Host memory used (avg / peak)", `${percent(s.averageMemoryPercent ?? null)} / ${percent(s.peakMemoryPercent ?? null)}`],
           ["API process memory (avg)", bytes(s.averageProcessRss)],
-          ["GPU", r.server.gpuStatus === "available" ? "Monitored" : "Not available on this host"],
+          ...(r.server.gpuStatus === "available" ? [["GPU", "Monitored"]] : []),
           ["Samples", `${number(s.samples)} (one per minute)`],
         ].map(([label, value]) => <div key={label} className="flex justify-between gap-3 py-2.5"><span>{label}</span><span className="text-right tabular-nums">{value}</span></div>)}</div>
           : <Note>No server measurements were recorded in this period.</Note>}
@@ -129,7 +129,7 @@ function Report({ r }: { r: AnalyticsReport }) {
       <Panel icon={Database} title={r.database?.provider || "Database"}>
         {r.database ? <div className="divide-y divide-[#ecebe6] text-[15px]">{[
           ["Data stored", bytes(r.database.dataSize)], ["Storage used (disk)", bytes(r.database.storageSize)], ["Index size", bytes(r.database.indexSize)],
-          ["Documents", number(r.database.objects)], ["Server memory", r.database.memory ? bytes(r.database.memory.residentBytes) : "Not available"],
+          ["Documents", number(r.database.objects)], ...(r.database.memory ? [["Server memory", bytes(r.database.memory.residentBytes)]] : []),
         ].map(([label, value]) => <div key={label} className="flex justify-between gap-3 py-2.5"><span>{label}</span><span className="text-right tabular-nums">{value}</span></div>)}</div>
           : <Note>Database statistics could not be read.</Note>}
         <p className={cn("mt-3 text-[13px]", muted)}>Current values at report time; database size is not tracked per period.</p>
