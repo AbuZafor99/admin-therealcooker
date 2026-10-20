@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAdminAccess } from "@/components/admin-access";
 import { getExecutiveDashboard, getInfrastructure, type ExecutiveDashboard, type Infrastructure, type ServiceState } from "@/lib/operations";
 import { apiError, cn } from "@/lib/utils";
-import { bytes, card, dateTime, duration, MeterRow, MiniStat, muted, Note, number, Panel, percent, SectionLabel, StatCard, timeAgo, uptimeTone } from "@/components/dashboard-ui";
+import { bytes, card, dateTime, MeterRow, MiniStat, muted, Note, number, Panel, percent, SectionLabel, StatCard, timeAgo, uptimeTone } from "@/components/dashboard-ui";
 
 function PanicIcon() {
   return <span className="text-[11px] font-extrabold tracking-tight">SOS</span>;
@@ -27,7 +27,7 @@ const kycStyle: Record<string, { label: string; className: string }> = {
   completed: { label: "Verified", className: "bg-[#dcefd8] text-[#1f6b1f]" },
   failed: { label: "Rejected", className: "bg-[#f9d9d9] text-[#a12b2b]" },
 };
-const serviceStateLabel: Record<ServiceState, string> = { monitored: "Monitored", collecting: "Collecting data", not_configured: "Not configured", not_integrated: "Not integrated", not_monitored: "Not monitored" };
+const serviceStateLabel: Record<ServiceState, string> = { monitored: "Monitored", collecting: "Collecting data", not_configured: "Not configured" };
 // Listed bottom-to-top as stacked in each bar; the legend chips use the reference order instead.
 const trendSeries = [
   { key: "activeUsers", label: "Users", color: "#1c5fa8", chip: "bg-[#d9e8fa] text-[#1d5fa7]" },
@@ -35,14 +35,6 @@ const trendSeries = [
   { key: "alerts", label: "Alerts", color: "#e24c4b", chip: "bg-[#f9d8da] text-[#a3262c]" },
 ] as const;
 const trendChips = [trendSeries[0], trendSeries[2], trendSeries[1]];
-
-function deltaText(current: number | null, previous: number | null, format: (value: number) => string, unit: "points" | "time") {
-  if (current == null || previous == null) return null;
-  const change = Math.round((current - previous) * 10) / 10;
-  if (change === 0) return { text: "No change vs last week", tone: undefined };
-  if (unit === "points") return { text: `${change > 0 ? "+" : ""}${change}% vs last week`, tone: change > 0 ? "bad" as const : "good" as const };
-  return { text: `${change > 0 ? "Up" : "Down"} from ${format(previous)}`, tone: change > 0 ? "bad" as const : "good" as const };
-}
 
 function Snapshot({ d }: { d: ExecutiveDashboard }) {
   const s = d.snapshot;
@@ -55,16 +47,11 @@ function Snapshot({ d }: { d: ExecutiveDashboard }) {
 }
 
 function Security({ d }: { d: ExecutiveDashboard }) {
-  const { incidents } = d.status, { fraudAlerts, falsePositive, response } = d.security;
+  const { incidents } = d.status, { fraudAlerts } = d.security;
   const breakdown = [incidents.criticalSos && `${number(incidents.criticalSos)} Critical SOS`, incidents.elevatedGuardianPanic && `${number(incidents.elevatedGuardianPanic)} Elevated Guardian Panic`].filter(Boolean).join(" · ");
-  const fpDelta = deltaText(falsePositive.rate, falsePositive.previousRate, value => `${value}%`, "points");
-  const responseDelta = deltaText(response.averageMs, response.previousAverageMs, duration, "time");
-  const weeks = `this week (${d.periods.week.label}) compared with last week (${d.periods.lastWeek.label})`;
-  return <section><SectionLabel>Security &amp; incidents</SectionLabel><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+  return <section><SectionLabel>Security &amp; incidents</SectionLabel><div className="grid gap-4 sm:grid-cols-2">
     <StatCard label="Active high-risk events" value={number(incidents.active)} detail={breakdown || "No active incidents"} tone={incidents.active ? "danger" : undefined} title="Unresolved incidents: Critical SOS activations and Elevated Guardian Panic requests, each counted once" />
     <StatCard label="Fraud alerts today" value={number(fraudAlerts.today)} detail={`${number(fraudAlerts.week)} this week · ${number(fraudAlerts.month)} this month`} tone={fraudAlerts.today ? "warning" : undefined} title={`Security alerts other than SOS and guardian panics. Week: ${d.periods.week.label}; month: ${d.periods.month.label}`} />
-    <StatCard label="False-positive rate" value={percent(falsePositive.rate)} detail={fpDelta?.text || (falsePositive.reviewed ? `${number(falsePositive.reviewed)} reviewed this week` : "No reviewed alerts this week")} detailTone={fpDelta?.tone} title={`Share of reviewed alerts marked false positive, ${weeks}`} />
-    <StatCard label="Avg response time" value={duration(response.averageMs)} detail={responseDelta?.text || (response.samples ? `Across ${number(response.samples)} alerts this week` : "No alerts actioned this week")} detailTone={responseDelta?.tone} title={`Average time from an alert to the first operator action, ${weeks}`} />
   </div></section>;
 }
 
@@ -126,7 +113,7 @@ function PlatformUptime({ d, canHealth }: { d: ExecutiveDashboard; canHealth: bo
   </Panel>;
 }
 
-function VerifierUsage({ d, canVerify }: { d: ExecutiveDashboard; canVerify: boolean }) {
+function VerifierUsage({ d, canVerify, canEvents }: { d: ExecutiveDashboard; canVerify: boolean; canEvents: boolean }) {
   const v = d.verifier;
   return <Panel icon={Search} title="Verifier tool usage" action={canVerify ? { href: "/verification", label: "Manage DB" } : null}>
     <div className="grid grid-cols-2 gap-3">
@@ -135,7 +122,10 @@ function VerifierUsage({ d, canVerify }: { d: ExecutiveDashboard; canVerify: boo
       <MiniStat label="Websites searched" value={number(v.byType.website)} detail="this month" />
       <MiniStat label="Flagged results" value={number(v.byOutcome.fraudulent)} detail={v.flagRate == null ? "No searches yet" : `${v.flagRate}% flag rate`} valueClass="text-[#b42318]" />
     </div>
-    <p className={cn("mt-4 text-[14px]", muted)} title={`All verifier searches in ${d.periods.month.label}, every supported type`}>{number(v.total)} searches this month across all types</p>
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+      <p className={cn("text-[14px]", muted)} title={`All verifier searches in ${d.periods.month.label}, every supported type`}>{number(v.total)} searches this month across all types</p>
+      {canEvents && <Link href="/events?kind=verification_lookup" className="text-[14px] text-[#1d5fa7] hover:underline">View search log</Link>}
+    </div>
     <div className="mt-3 space-y-4">
       <MeterRow label="Verified" value={percent(v.share.verified)} share={v.share.verified} color="#3d7a22" />
       <MeterRow label="Flagged" value={percent(v.share.fraudulent)} share={v.share.fraudulent} color="#e5484d" />
@@ -146,20 +136,18 @@ function VerifierUsage({ d, canVerify }: { d: ExecutiveDashboard; canVerify: boo
 
 function LearningTool({ d, canLearning }: { d: ExecutiveDashboard; canLearning: boolean }) {
   const l = d.learning;
-  const rows: { label: string; value: string; className?: string }[] = [
-    { label: "Modules completed", value: number(l.completed), className: "text-[#1f7a1f]" },
-    { label: "Modules not completed", value: number(l.notCompleted), className: "text-[#b42318]" },
-    { label: "Most popular module", value: l.mostPopular?.title || "—" },
-    { label: "Avg completion time", value: duration(l.averageDurationMs) },
-    { label: "Users doing extra questions", value: l.extraQuestionPercent == null ? number(l.extraQuestionUsers) : `${number(l.extraQuestionUsers)} (${l.extraQuestionPercent}%)` },
-    { label: "Completion rate", value: percent(l.completionRate), className: "text-[#1f7a1f]" },
+  const rows: { label: string; value: string; className?: string; title?: string }[] = [
+    { label: "Modules completed", value: number(l.completed), className: "text-[#1f7a1f]", title: "Each user and module counted once: the user opened the module and submitted its quiz" },
+    { label: "Modules not completed", value: number(l.notCompleted), className: "text-[#b42318]", title: "Modules users opened without submitting the quiz" },
+    { label: "Most popular module", value: l.mostPopular?.title || "—", title: l.mostPopular ? `Completed by ${l.mostPopular.completions} user${l.mostPopular.completions === 1 ? "" : "s"}, opened ${l.mostPopular.opens} time${l.mostPopular.opens === 1 ? "" : "s"}` : undefined },
+    { label: "Completion rate", value: percent(l.completionRate), className: "text-[#1f7a1f]", title: "Completed ÷ all opened modules" },
   ];
   return <Panel icon={GraduationCap} title="Learning tool" action={canLearning ? { href: "/learning", label: "View content" } : null}>
     <table className="w-full text-[16px]">
       <thead><tr className={cn("border-b border-[#dddbd4] text-left", muted)}><th className="px-3 pb-2.5 font-normal">Metric</th><th className="px-3 pb-2.5 text-right font-normal">Value</th></tr></thead>
-      <tbody className="divide-y divide-[#ecebe6]">{rows.map(row => <tr key={row.label}><td className="px-3 py-2.5">{row.label}</td><td className={cn("px-3 py-2.5 text-right tabular-nums", row.className)}>{row.value}</td></tr>)}</tbody>
+      <tbody className="divide-y divide-[#ecebe6]">{rows.map(row => <tr key={row.label} title={row.title}><td className="px-3 py-2.5">{row.label}</td><td className={cn("px-3 py-2.5 text-right tabular-nums", row.className)}>{row.value}</td></tr>)}</tbody>
     </table>
-    {!l.started && <p className={cn("mt-3 text-sm", muted)}>No learning modules have been started yet.</p>}
+    {!l.opened && <p className={cn("mt-3 text-sm", muted)}>No learning modules have been opened yet.</p>}
   </Panel>;
 }
 
@@ -239,7 +227,7 @@ function BackendServer({ infra }: { infra: Infrastructure }) {
   const diskUsed = latest.disk ? latest.disk.total - latest.disk.free : null;
   const gpu = server.gpu.status === "available" && latest.gpus?.length
     ? latest.gpus.map(item => `${item.name}: ${item.utilizationPercent}% · ${bytes(item.memoryUsed)} of ${bytes(item.memoryTotal)}`).join("; ")
-    : server.gpu.status === "unknown" ? "Checking" : "Not available on this host";
+    : null;
   return <Panel icon={Server} title="Backend server">
     <div className="grid grid-cols-2 gap-3">
       <MiniStat label="CPU (whole host)" value={latest.host.cpuPercent == null ? "—" : `${latest.host.cpuPercent}%`} detail={latest.host.cpuPercent == null ? "Measuring…" : `${latest.host.cores} cores${latest.host.loadAverage != null ? ` · load ${latest.host.loadAverage}` : ""}`} />
@@ -255,12 +243,13 @@ function BackendServer({ infra }: { infra: Infrastructure }) {
           </LineChart>
         </ResponsiveContainer></div>
       : <p className={cn("mt-4 text-[14px]", muted)}>The 24-hour trend appears once there are measurements across at least two 15-minute intervals.</p>}
+    {/* Only measurements this host actually provides are listed. */}
     <DetailRows rows={[
       { label: "API process memory", value: bytes(latest.process.rss), title: "Resident memory of the Node.js API process only" },
-      { label: "API process CPU", value: latest.process.cpuPercent == null ? "—" : `${latest.process.cpuPercent}%`, title: "Share of the whole host's CPU capacity used by the API process" },
+      ...(latest.process.cpuPercent != null ? [{ label: "API process CPU", value: `${latest.process.cpuPercent}%`, title: "Share of the whole host's CPU capacity used by the API process" }] : []),
       ...(latest.container ? [{ label: "Container memory", value: `${bytes(latest.container.memoryUsage)} of ${bytes(latest.container.memoryLimit)}` }] : []),
-      { label: "Disk", value: latest.disk && diskUsed != null ? `${bytes(diskUsed)} of ${bytes(latest.disk.total)} (${percent(share(diskUsed, latest.disk.total))})` : "Not available" },
-      { label: "GPU", value: gpu, muted: server.gpu.status !== "available" },
+      ...(latest.disk && diskUsed != null ? [{ label: "Disk", value: `${bytes(diskUsed)} of ${bytes(latest.disk.total)} (${percent(share(diskUsed, latest.disk.total))})` }] : []),
+      ...(gpu ? [{ label: "GPU", value: gpu }] : []),
       { label: "Uptime", value: `Host ${uptime(latest.host.uptimeSeconds)} · API ${uptime(latest.process.uptimeSeconds)}` },
     ]} />
     <p className={cn("mt-3 text-[13px]", muted)}>{server.environment} · {server.platform}/{server.arch} · Node {server.nodeVersion.replace(/^v/, "")} · measured {dateTime(latest.checkedAt)}{server.trackingSince ? ` · history from ${dateTime(server.trackingSince)}` : ""}</p>
@@ -278,11 +267,11 @@ function DatabasePanel({ infra }: { infra: Infrastructure }) {
       <MiniStat label="Index size" value={bytes(db.indexSize)} detail="all indexes" />
       <MiniStat label="Documents" value={number(db.objects)} detail={`${number(db.collections)} collections`} />
     </div>
+    {/* Only figures this cluster tier reports are listed. */}
     <DetailRows rows={[
-      { label: "Server memory", value: db.memory ? bytes(db.memory.residentBytes) : "Not available", muted: !db.memory, title: db.memoryUnavailableReason || "Resident memory of the database server process" },
-      { label: "Server CPU", value: "Not available", muted: true, title: db.cpuUnavailableReason },
-      { label: "Cluster disk capacity", value: db.filesystem ? `${bytes(db.filesystem.used)} of ${bytes(db.filesystem.total)}` : "Not reported by this tier", muted: !db.filesystem },
-      { label: "Connections", value: db.connections ? `${number(db.connections.current)} open${db.connections.available != null ? ` · ${number(db.connections.available)} available` : ""}` : "Not available", muted: !db.connections },
+      ...(db.memory ? [{ label: "Server memory", value: bytes(db.memory.residentBytes), title: "Resident memory of the database server process" }] : []),
+      ...(db.filesystem ? [{ label: "Cluster disk capacity", value: `${bytes(db.filesystem.used)} of ${bytes(db.filesystem.total)}` }] : []),
+      ...(db.connections ? [{ label: "Connections", value: `${number(db.connections.current)} open${db.connections.available != null ? ` · ${number(db.connections.available)} available` : ""}` }] : []),
       { label: "Replica set", value: db.replicaSet ? `${db.replicaSet.members ?? "?"} members · primary ${db.replicaSet.writablePrimary ? "writable" : "not writable"}` : "Standalone" },
     ]} />
     <p className={cn("mt-3 text-[13px]", muted)}>{db.version ? `Version ${db.version} · ` : ""}measured {dateTime(db.checkedAt)} · refreshed every 5 minutes</p>
@@ -318,7 +307,7 @@ export default function DashboardPage() {
       <PlatformUptime d={d} canHealth={access.can("health:read")} />
     </div>
     <div className="grid gap-4 lg:grid-cols-2">
-      <VerifierUsage d={d} canVerify={access.can("verification:read")} />
+      <VerifierUsage d={d} canVerify={access.can("verification:read")} canEvents={access.can("events:read")} />
       <LearningTool d={d} canLearning={access.can("learning:read")} />
     </div>
     <TrendOverview d={d} />

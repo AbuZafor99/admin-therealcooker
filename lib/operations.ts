@@ -15,7 +15,7 @@ export interface DashboardStatus {
   systems: { operational: boolean | null; degraded: string[]; checkedAt: string | null };
 }
 
-export type ServiceState = "monitored" | "collecting" | "not_configured" | "not_integrated" | "not_monitored";
+export type ServiceState = "monitored" | "collecting" | "not_configured";
 export interface ServiceStatus {
   service: string; label: string; state: ServiceState; method?: string; detail?: string; percent: number | null;
   samples?: number; lastCheckedAt?: string; healthyNow?: boolean; lastFailureAt?: string | null; lastError?: string | null;
@@ -26,25 +26,23 @@ export type SearchType = "phone" | "account" | "email" | "website";
 export type SearchOutcome = "verified" | "fraudulent" | "not_found";
 export interface SearchStats { total: number; numbers: number; byType: Record<SearchType, number>; byOutcome: Record<SearchOutcome, number>; flagRate: number | null; share: Record<SearchOutcome, number | null> }
 export interface GuardianAlertStats { total: number; fromSos: number; fromGuardianPanic: number; push: { trackedSince: string | null; attempts: number; accepted: number; failed: number; noDevice: number } }
+// Counted per user per module: completed once the quiz is submitted, otherwise not completed.
+export interface LearningOverview { opened: number; completed: number; notCompleted: number; completionRate: number | null; mostPopular: { title: string | null; completions: number; opens: number } | null; openTrackingSince: string | null }
 export interface IncidentActivity { total: number; criticalSos: number; elevatedGuardianPanic: number; resolved: number; averageResolutionMs: number | null; averageFirstActionMs: number | null }
 
 // Percentages and averages are null when there is nothing to measure, which is distinct from a real zero.
 export interface ExecutiveDashboard {
   generatedAt: string;
   timezone: string;
-  periods: Record<"week" | "month" | "lastWeek", { start: string; label: string }>;
+  periods: Record<"week" | "month", { start: string; label: string }>;
   status: DashboardStatus;
   snapshot: { totalUsers: number; newThisWeek: number; activeToday: number; activeThisMonth: number; verifiedUsers: number; verifiedPercent: number | null; bankConnected: number; bankConnectedPercent: number | null };
-  security: {
-    fraudAlerts: { today: number; week: number; month: number };
-    falsePositive: { rate: number | null; reviewed: number; previousRate: number | null };
-    response: { averageMs: number | null; samples: number; previousAverageMs: number | null };
-  };
+  security: { fraudAlerts: { today: number; week: number; month: number } };
   panics: { criticalSosToday: number; guardianPanicsToday: number; resolvedToday: number; open: number; guardianAlertsToday: GuardianAlertStats };
   feed: { id: string; type: string; classification: string; title: string; status: string; createdAt: string; userId: string | null; bankName: string | null; lockedAccounts: number | null; locationShared: boolean | null }[] | null;
   services: ServiceStatus[];
   verifier: SearchStats;
-  learning: { started: number; completed: number; notCompleted: number; completionRate: number | null; averageDurationMs: number | null; learners: number; extraQuestionUsers: number; extraQuestionPercent: number | null; mostPopular: { title: string | null; users: number } | null };
+  learning: LearningOverview;
   trend: { date: string; activeUsers: number; alerts: number; panics: number }[];
   kyc: { pending: number; verified: number; rejected: number; recent: { id: string; name: string | null; userId: string | null; status: string; submittedAt: string | null }[] | null };
   banks: { connectedUsers: number; rows: { bank: string; users: number; percent: number | null }[] };
@@ -87,7 +85,7 @@ export interface AnalyticsReport {
   alerts: { fraud: { period: number; previous: number; byType: { type: string; count: number }[]; bySeverity: { severity: string; count: number }[] }; quality: { period: AlertQuality; previous: AlertQuality } };
   searches: { period: SearchStats; previous: SearchStats };
   users: { period: UserActivity; previous: UserActivity };
-  learning: { started: number; completed: number; averageDurationMs: number | null };
+  learning: LearningOverview;
   daily: { date: string; activeUsers: number; newUsers: number; incidents: number; fraudAlerts: number; searches: number }[];
   services: ServiceStatus[];
   server: { environment: string; platform: string; arch: string; cores: number; gpuStatus: string; period: { samples: number; since: string | null; averageCpuPercent?: number | null; peakCpuPercent?: number | null; averageMemoryPercent?: number | null; peakMemoryPercent?: number | null; averageProcessRss?: number | null } };

@@ -24,7 +24,7 @@ export const getDashboardStats = () => api.get<ApiResponse<{ totalUsers: number;
 export const getRecentUsers = () => api.get<ApiResponse<UserRecord[]>>("/admin/dashboard/recent-users").then(r => r.data.data);
 export const getUsers = (page = 1, limit = 10, search = "", filters: Record<string, string> = {}) => api.get<ApiResponse<{ users: UserRecord[]; pagination: Pagination }>>("/users/admin/list", { params: { ...filters, page, limit, search } }).then(r => r.data.data);
 export const updateUser = (id: string, payload: FormData) => api.patch<ApiResponse<UserRecord>>(`/users/admin/list/${id}`, payload).then(r => r.data);
-export const deleteUser = (id: string) => api.delete<ApiResponse<null>>(`/users/admin/list/${id}`).then(r => r.data);
+export const deleteUser = (id: string) => api.delete<ApiResponse<{ removed: Record<string, number> }>>(`/users/admin/list/${id}`).then(r => r.data);
 export const setUserBlocked = (id: string, isBlocked: boolean, reason = "Admin action") => api.patch<ApiResponse<{ _id: string; isBlocked: boolean }>>(`/admin/users/${id}/block`, { isBlocked, reason }).then(r => r.data);
 export const getGuardians = (page = 1, limit = 10, search = "") => api.get<ApiResponse<{ guardians: GuardianRecord[]; pagination: Pagination }>>("/admin/guardians", { params: { page, limit, search } }).then(r => r.data.data);
 export const getProfile = () => api.get<ApiResponse<UserRecord>>("/users/profile").then(r => r.data.data);
