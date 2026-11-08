@@ -108,20 +108,21 @@ export interface EventItem { _id: string; kind: string; tool?: string; source?: 
 // Community feedback on contacts the verifier had no record of (see the backend's utils/communityVotes.js).
 export type FeedbackVerdict = "legitimate" | "suspicious" | "not_sure";
 export type FeedbackStatus = "collecting" | "needs_review" | "resolved";
-export type FeedbackAction = "verify" | "flag" | "collect";
+export type FeedbackAction = "verify" | "flag" | "hold";
+export type FeedbackReviewReason = "not_sure_leads" | "tie";
 export interface FeedbackCounts { legitimate: number; suspicious: number; not_sure: number; total: number }
 export interface FeedbackResolution { verdict: "legitimate" | "suspicious"; by: "community" | "admin"; admin?: { _id: string; name?: string; email?: string } | string; reason?: string; at: string }
 export interface FeedbackItem {
   _id: string; type: SearchType; value: string; displayValue: string; counts: FeedbackCounts;
-  outcome: "none" | "tie" | FeedbackVerdict; status: FeedbackStatus; resolution?: FeedbackResolution;
+  outcome: "none" | "tie" | FeedbackVerdict; status: FeedbackStatus; reviewReason?: FeedbackReviewReason; closedAt?: string; resolution?: FeedbackResolution;
   verification?: { _id: string; status: "verified" | "fraudulent"; source: string; updatedAt?: string } | null;
   firstVoteAt?: string; lastVoteAt?: string; createdAt: string; updatedAt: string;
 }
-export interface FeedbackList { items: FeedbackItem[]; pagination: Pagination; summary: { contacts: number; votesThisWeek: number; weekLabel: string; awaitingReview: number; markedScam: number }; minimumVotes: number }
+export interface FeedbackList { items: FeedbackItem[]; pagination: Pagination; summary: { contacts: number; votesThisWeek: number; weekLabel: string; awaitingReview: number; markedScam: number }; requiredVotes: number }
 export interface FeedbackDetail extends FeedbackItem {
   votes: { id: string; verdict: FeedbackVerdict; createdAt: string }[];
-  history: { action: "community_verdict" | "review_required" | "admin_verified" | "admin_flagged" | "keep_collecting"; by: "community" | "admin"; admin?: { _id: string; name?: string; email?: string }; reason?: string; counts: FeedbackCounts; at: string }[];
-  minimumVotes: number;
+  history: { action: "community_verdict" | "review_required" | "admin_verified" | "admin_flagged" | "keep_collecting" | "kept_pending" | "consensus_reset"; by: "community" | "admin"; admin?: { _id: string; name?: string; email?: string }; reason?: string; counts: FeedbackCounts; at: string }[];
+  requiredVotes: number;
 }
 
 export const getDashboardStatus = () => api.get<ApiResponse<DashboardStatus>>("/admin/dashboard/status").then(response => response.data.data);

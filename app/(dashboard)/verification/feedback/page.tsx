@@ -33,10 +33,17 @@ function statusOf(item: FeedbackItem) {
     : { label: "Verified", className: "bg-[#dcefd8] text-[#1f6b1f]" };
 }
 const verdictName = (verdict?: string) => verdict === "suspicious" ? "Not verified (scam)" : verdict === "legitimate" ? "Verified" : "—";
-function decisionNote(item: FeedbackItem) {
+function reviewReasonNote(item: FeedbackItem) {
+  if (item.reviewReason === "not_sure_leads" || item.outcome === "not_sure") return "Sent for review because Not sure received the highest number of votes across the 30 community submissions.";
+  return "Sent for review because the leading vote options were tied across the 30 community submissions.";
+}
+function decisionNote(item: FeedbackItem, requiredVotes = 30) {
   const r = item.resolution;
-  if (!r) return item.status === "needs_review" ? "No verdict yet. The votes have no clear winner." : "No verdict yet. Waiting for a clear lead.";
-  return `${verdictName(r.verdict)} in the verifier, decided by ${r.by === "admin" ? adminName(r.admin) : "community votes"} on ${dateTime(r.at)}${item.status === "needs_review" ? ". Newer votes are unclear, so it needs review." : "."}`;
+  if (!r) {
+    if (item.status === "needs_review") return reviewReasonNote(item);
+    return `No verdict yet. Collecting ${requiredVotes} unique community votes (${item.counts.total}/${requiredVotes} received).`;
+  }
+  return `${verdictName(r.verdict)} in the verifier, decided by ${r.by === "admin" ? adminName(r.admin) : `${requiredVotes} community votes`} on ${dateTime(r.at)}.`;
 }
 function leader(counts: FeedbackCounts, outcome: FeedbackItem["outcome"]) {
   if (outcome === "none") return { text: "No votes yet", className: muted };
@@ -78,8 +85,9 @@ function FeedbackTable({ items, selected, onSelect }: { items: FeedbackItem[]; s
 }
 
 const historyLabel: Record<FeedbackDetail["history"][number]["action"], string> = {
-  community_verdict: "Community verdict applied", review_required: "Flagged for review", admin_verified: "Marked as verified",
-  admin_flagged: "Marked as not verified (scam)", keep_collecting: "Kept collecting votes",
+  community_verdict: "Community verdict applied (30 votes)", review_required: "Flagged for admin review (30 votes)", admin_verified: "Marked as verified",
+  admin_flagged: "Marked as not verified (scam)", keep_collecting: "Kept collecting votes", kept_pending: "Kept pending admin review",
+  consensus_reset: "Reset to collect 30 unique votes",
 };
 
 function ReviewPanel({ id, canDecide }: { id: string; canDecide: boolean }) {
@@ -97,7 +105,7 @@ function ReviewPanel({ id, canDecide }: { id: string; canDecide: boolean }) {
   const d = query.data;
   if (query.isLoading) return <Skeleton className="h-[520px] rounded-2xl" />;
   if (!d) return <div className={cn(card, "p-5")}><Note>This record could not load: {apiError(query.error)}</Note></div>;
-  const lead = leader(d.counts, d.outcome), adminDecided = d.resolution?.by === "admin";
+  const lead = leader(d.counts, d.outcome), canHold = d.status === "needs_review";
   const final = (action: FeedbackAction) => {
     if (!reason.trim()) { toast.error("Give a short reason for this decision"); return; }
     decide.mutate(action);
@@ -108,7 +116,7 @@ function ReviewPanel({ id, canDecide }: { id: string; canDecide: boolean }) {
     <p className={cn("mt-1 text-[14px]", muted)}>First vote {d.firstVoteAt ? dateTime(d.firstVoteAt) : "—"} · last vote {d.lastVoteAt ? dateTime(d.lastVoteAt) : "—"}</p>
 
     <div className="mt-4 rounded-xl border border-[#e4e2dc] bg-[#fafaf7] p-4">
-      <p className={cn("text-[14px]", muted)}>Total votes</p>
+      <p className={cn("text-[14px]", muted)}>Total votes ({number(d.counts.total)} / {number(d.requiredVotes || 30)} required)</p>
       <p className="mt-0.5 flex flex-wrap items-baseline gap-x-2"><span className="text-[30px] font-semibold leading-tight tabular-nums">{number(d.counts.total)}</span><span className={cn("text-[14px] font-medium", lead.className)}>{lead.text}</span></p>
     </div>
     <div className="mt-4 space-y-3">{verdicts.map(v => <div key={v.key}>
@@ -119,20 +127,20 @@ function ReviewPanel({ id, canDecide }: { id: string; canDecide: boolean }) {
     <div className="mt-5 border-t border-[#ecebe6] pt-4">
       <p className="text-[15px] font-semibold">Current status</p>
       <p className="mt-1"><span className={cn("rounded-full px-2.5 py-1 text-[13px] font-medium", statusOf(d).className)}>{statusOf(d).label}</span></p>
-      <p className={cn("mt-2 text-[14px] leading-snug", muted)}>{decisionNote(d)}</p>
+      <p className={cn("mt-2 text-[14px] leading-snug", muted)}>{decisionNote(d, d.requiredVotes || 30)}</p>
       {d.resolution?.reason && <p className="mt-1 text-[14px] leading-snug">&ldquo;{d.resolution.reason}&rdquo;</p>}
     </div>
 
     <div className="mt-5 border-t border-[#ecebe6] pt-4">
       <p className="text-[15px] font-semibold">Admin decision</p>
-      <p className={cn("mt-0.5 text-[13px] leading-snug", muted)}>Sets what users see the next time this contact is checked. Later votes are still counted but never change an admin decision.</p>
+      <p className={cn("mt-0.5 text-[13px] leading-snug", muted)}>Sets the authoritative verification result for this contact. An admin decision is final and cannot be overwritten by community votes.</p>
       {canDecide ? <>
         <label className="mt-3 block text-[13px] font-medium" htmlFor="decision-reason">Reason <span className={muted}>(required to verify or flag)</span></label>
         <textarea id="decision-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={2000} rows={2} placeholder="e.g. Confirmed with the bank" className="mt-1 w-full resize-y rounded-lg border border-[#d8d6cf] px-3 py-2 text-[14px] outline-none focus:ring-2 focus:ring-[#caa85a]/30" />
         <div className="mt-3 grid gap-2">
           <button type="button" disabled={decide.isPending} onClick={() => final("verify")} className="h-11 rounded-lg border border-[#b9dcb1] bg-[#e3f3df] text-[15px] font-semibold text-[#1f6b1f] transition hover:bg-[#d5ecd0] disabled:opacity-50">Mark as verified</button>
           <button type="button" disabled={decide.isPending} onClick={() => final("flag")} className="h-11 rounded-lg bg-[#b42318] text-[15px] font-semibold text-white transition hover:bg-[#9b1d14] disabled:opacity-50">Mark as not verified (scam)</button>
-          <button type="button" disabled={decide.isPending || adminDecided} onClick={() => decide.mutate("collect")} title={adminDecided ? "An admin has decided this contact; mark it verified or not verified to change that" : undefined} className="h-11 rounded-lg border border-[#d8d6cf] bg-white text-[15px] font-semibold text-[#3b3b36] transition hover:bg-[#f6f6f3] disabled:opacity-50">Keep collecting votes</button>
+          <button type="button" disabled={decide.isPending || !canHold} onClick={() => decide.mutate("hold")} title={!canHold ? "Only contacts awaiting admin review can be kept pending" : undefined} className="h-11 rounded-lg border border-[#d8d6cf] bg-white text-[15px] font-semibold text-[#3b3b36] transition hover:bg-[#f6f6f3] disabled:opacity-50">Keep pending review</button>
         </div>
       </> : <Note>Your admin role can view feedback but not decide on it.</Note>}
     </div>
@@ -210,6 +218,6 @@ export default function FeedbackVotesPage() {
       </section>
       {current ? <ReviewPanel key={current} id={current} canDecide={access.can("verification:write")} /> : !query.isLoading && <div className={cn(card, "p-5")}><Note>Select a contact to see its votes.</Note></div>}
     </div>
-    {d && <p className={cn("pb-2 text-xs leading-5", muted)}>A contact becomes Verified or Not verified when Legitimate or Suspicious has more votes than each other option{d.minimumVotes > 1 ? ` and at least ${d.minimumVotes} votes are in` : ""}. Ties and contacts where Not sure leads wait for an admin. Refreshes every minute.</p>}
+    {d && <p className={cn("pb-2 text-xs leading-5", muted)}>Once {d.requiredVotes || 30} unique users have voted on a contact, it becomes Verified or Not verified when Legitimate or Suspicious has strictly more votes than each other option. Ties and contacts where Not sure leads are sent for admin review. Refreshes every minute.</p>}
   </div>;
 }
